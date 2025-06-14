@@ -6,6 +6,9 @@ import 'dart:async';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:share_plus/share_plus.dart'; // For sharing
+import 'package:http/http.dart' as http; // For HTTP requests
+import 'dart:convert'; // For jsonDecode
 
 import '../models/recording_entry.dart';
 import '../widgets/category_selector_widget.dart';
@@ -29,7 +32,8 @@ class HiddenRecordingsScreen extends StatefulWidget {
 class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
   FlutterSoundPlayer? _player;
   bool _isPlayerInitialized = false;
-  String? _currentlyPlayingFileId;
+  String?
+  _currentlyPlayingFileId; // Changed from _currentlyPlayingId to be more specific
 
   FlutterSoundRecorder? _recorder;
   bool _isRecorderInitialized = false;
@@ -41,6 +45,11 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
   Map<String, dynamic>? _selectedCategoryDataForHidden;
 
   final PasswordService _passwordService = PasswordService();
+
+  // For Lemonfox AI Transcription
+  final String _lemonFoxApiKey =
+      "Sf8cPZsgkaVohAnV31DxsiSO9QiIiqbj"; // <-- IMPORTANT: Replace with your actual key.
+  bool _isTranscribing = false; // Generic transcribing flag
 
   final List<Map<String, dynamic>> _predefinedCategoriesForHidden = [
     {
@@ -159,58 +168,64 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
     });
   }
 
+  Future<void> _stopCurrentPlayback() async {
+    if (_player != null && _player!.isPlaying) {
+      await _player!.stopPlayer();
+    }
+    if (mounted && _currentlyPlayingFileId != null) {
+      // Update the specific entry in the list if needed, or rely on ValueListenableBuilder
+      // For simplicity, just clear the playing ID. The list item will rebuild.
+      setState(() {
+        _currentlyPlayingFileId = null;
+      });
+    }
+  }
+
   Future<void> _togglePlayRecordingItem(
     RecordingEntry entry,
-    List<RecordingEntry> currentList,
+    // List<RecordingEntry> currentList, // No longer need currentList if we update via Hive/ValueListenableBuilder
   ) async {
     if (!_isPlayerInitialized || _player == null) {
-      if (mounted)
+      if (mounted) {
         showCustomSnackBar(context: context, message: 'Player not ready.');
+      }
       return;
     }
+
     final bool wasCurrentlyPlayingThisEntry =
         _currentlyPlayingFileId == entry.id;
 
-    if (_player!.isPlaying) {
-      await _player!.stopPlayer();
-    }
+    // Stop any current playback
+    await _stopCurrentPlayback();
 
     if (wasCurrentlyPlayingThisEntry) {
-      if (mounted)
+      // If it was this entry, it's now stopped, so update its state
+      // The actual isPlaying flag on the entry object is managed by the list item widget itself
+      // based on _currentlyPlayingFileId. Here we just clear the global ID.
+      if (mounted) {
         setState(() {
-          entry.isPlaying = false;
           _currentlyPlayingFileId = null;
         });
-    } else {
-      final previousPlayingIndex = currentList.indexWhere(
-        (e) => e.id == _currentlyPlayingFileId,
-      );
-      if (previousPlayingIndex != -1 &&
-          currentList[previousPlayingIndex].isPlaying) {
-        if (mounted) {
-          setState(() {
-            currentList[previousPlayingIndex].isPlaying = false;
-          });
-        }
       }
-
+    } else {
+      // Play the new entry
       try {
         await _player!.startPlayer(
           fromURI: entry.filePath,
-          codec: Codec.aacADTS,
+          codec: Codec.aacADTS, // Ensure this matches your recording format
           whenFinished: () {
-            if (mounted)
+            if (mounted) {
               setState(() {
-                entry.isPlaying = false;
                 _currentlyPlayingFileId = null;
               });
+            }
           },
         );
-        if (mounted)
+        if (mounted) {
           setState(() {
-            entry.isPlaying = true;
             _currentlyPlayingFileId = entry.id;
           });
+        }
       } catch (e, s) {
         print(
           "[HiddenRecordingsScreen] Error playing hidden recording item: $e",
@@ -222,7 +237,6 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
             message: 'Error playing recording.',
           );
           setState(() {
-            entry.isPlaying = false;
             _currentlyPlayingFileId = null;
           });
         }
@@ -248,14 +262,10 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
     final box = Hive.box<RecordingEntry>(hiddenRecordingsBoxName);
     final String deletedFilePath = entry.filePath;
 
-    box.delete(entry.id);
+    box.delete(entry.id); // This will trigger ValueListenableBuilder
 
-    if (_currentlyPlayingFileId == entry.id &&
-        _player != null &&
-        _player!.isPlaying) {
-      _player!.stopPlayer().then((_) {
-        if (mounted) setState(() => _currentlyPlayingFileId = null);
-      });
+    if (_currentlyPlayingFileId == entry.id) {
+      _stopCurrentPlayback(); // Ensure playback stops and ID is cleared
     }
     _deleteRecordingFile(deletedFilePath);
     if (mounted) {
@@ -305,7 +315,7 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
               _selectedCategoryDataForHidden ??
               _predefinedCategoriesForHidden.first;
 
-          final newEntry = RecordingEntry.create(
+          final newEntry = RecordingEntry(
             id: DateTime.now().millisecondsSinceEpoch.toString(),
             filePath: path,
             displayName: recordingName,
@@ -314,7 +324,9 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
             moodName: categoryToSave['name'] as String,
             moodColor: categoryToSave['color'] as Color,
             moodIconColor: categoryToSave['iconColor'] as Color,
-            emoji: categoryToSave['emoji'] as String? ?? '🤫',
+            moodEmoji: categoryToSave['emoji'] as String? ?? '🤫',
+            isPlaying: false, // Ensure isPlaying is false initially
+            transcription: null,
           );
           final box = Hive.box<RecordingEntry>(hiddenRecordingsBoxName);
           box.put(newEntry.id, newEntry);
@@ -420,118 +432,334 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
 
   Future<void> _handleChangePin() async {
     print("[_handleChangePin] Initiating PIN change process.");
-
-    // Step 1: Ask for current PIN
-    print(
-      "[_handleChangePin] Showing EnterPasswordDialog to verify current PIN.",
-    );
     bool? currentPinVerified = await showDialog<bool>(
       context: context,
-      barrierDismissible:
-          false, // Ensures dialog is explicitly popped with a value
+      barrierDismissible: false,
       builder: (BuildContext dialogContext) {
         return EnterPasswordDialog(
-          passwordService:
-              _passwordService, // Make sure _passwordService is initialized
-          onPasswordEntered: (bool _) {
-            // This callback is primarily for the dialog's internal use or other listeners.
-            // The value returned by showDialog (currentPinVerified) is key here.
+          passwordService: _passwordService,
+          onPasswordEntered: (bool passwordCorrect) {
+            // The assignment to currentPinVerified is removed.
+            // The value for currentPinVerified will be set by the result of await showDialog
+            // when EnterPasswordDialog calls Navigator.pop().
           },
         );
       },
     );
 
-    print(
-      "[_handleChangePin] Result from EnterPasswordDialog (currentPinVerified): $currentPinVerified",
-    );
-
-    // THIS IS THE CRITICAL CHECK:
-    // If currentPinVerified is true, it means EnterPasswordDialog successfully
-    // verified the current PIN and called Navigator.of(context).pop(true).
     if (currentPinVerified == true) {
-      print(
-        "[_handleChangePin] Current PIN verification successful. Proceeding to set new PIN.",
-      );
-      if (!mounted) {
-        print(
-          "[_handleChangePin] Widget is no longer mounted after current PIN verification. Aborting.",
-        );
-        return;
-      }
-
-      // Step 2: Current PIN correct, now show CreatePasswordDialog for new PIN
-      print(
-        "[_handleChangePin] Showing CreatePasswordDialog for new PIN setup.",
-      );
+      if (!mounted) return;
       bool? newPinSet = await showDialog<bool>(
         context: context,
-        barrierDismissible:
-            false, // Ensures dialog is explicitly popped with a value
+        barrierDismissible: false,
         builder: (BuildContext dialogContext) {
           return CreatePasswordDialog(
-            passwordService:
-                _passwordService, // Make sure _passwordService is initialized
-            onPasswordSet: (bool _) {
-              // Similar to EnterPasswordDialog, the key is the value returned by showDialog.
+            passwordService: _passwordService,
+            onPasswordSet: (bool passwordCreated) {
+              if (passwordCreated) {
+                // setState(() {
+                //   _isGestureAccessActive = true; // This variable is not defined in this class
+                // });
+              }
             },
           );
         },
       );
 
-      print(
-        "[_handleChangePin] Result from CreatePasswordDialog (newPinSet): $newPinSet",
-      );
-
       if (newPinSet == true) {
         if (mounted) {
-          print("[_handleChangePin] New PIN successfully set.");
           showCustomSnackBar(
             context: context,
             message: "PIN changed successfully!",
             iconColor: Colors.green,
           );
         }
-      } else if (newPinSet == false) {
+      } else {
         if (mounted) {
-          print("[_handleChangePin] CreatePasswordDialog was cancelled.");
           showCustomSnackBar(
             context: context,
-            message: "PIN change cancelled.",
+            message: "PIN change cancelled or failed.",
             iconColor: Colors.orange,
           );
         }
-      } else {
-        // newPinSet is null
-        print(
-          "[_handleChangePin] CreatePasswordDialog returned null. Issue in CreatePasswordDialog pop logic.",
-        );
-        if (mounted) {
-          showCustomSnackBar(
-            context: context,
-            message: "Failed to set new PIN. Please try again.",
-            iconColor: Colors.red,
-          );
-        }
       }
-    } else if (currentPinVerified == false) {
-      print(
-        "[_handleChangePin] Current PIN verification was cancelled (EnterPasswordDialog returned false).",
-      );
-      // User cancelled the EnterPasswordDialog.
     } else {
-      // currentPinVerified is null
-      print(
-        "[_handleChangePin] EnterPasswordDialog returned null. CRITICAL: This means EnterPasswordDialog did not pop with true on success.",
-      );
+      if (mounted && currentPinVerified == false) {
+        // Explicitly false means incorrect PIN
+        // EnterPasswordDialog should show its own snackbar for incorrect PIN
+      } else if (mounted && currentPinVerified == null) {
+        // Null means dialog was dismissed without action
+        showCustomSnackBar(
+          context: context,
+          message: "PIN verification cancelled.",
+          iconColor: Colors.orange,
+        );
+      }
+    }
+  }
+
+  // --- Transcription Logic ---
+  Future<void> _transcribeWithLemonFox(RecordingEntry entry) async {
+    if (_lemonFoxApiKey == "YOUR_LEMONFOX_API_KEY" || _lemonFoxApiKey.isEmpty) {
       if (mounted) {
         showCustomSnackBar(
           context: context,
-          message:
-              "Error verifying current PIN. Please try again.", // This is the message you saw
+          message: 'Lemonfox API Key not set.',
+        );
+      }
+      return;
+    }
+    if (entry.filePath.isEmpty) {
+      if (mounted) {
+        showCustomSnackBar(
+          context: context,
+          message: 'Error: Recording file path is missing.',
+        );
+      }
+      return;
+    }
+    final File audioFile = File(entry.filePath);
+    if (!await audioFile.exists()) {
+      if (mounted) {
+        showCustomSnackBar(
+          context: context,
+          message: 'Error: Recording file not found.',
+        );
+      }
+      return;
+    }
+
+    // Stop playback if this entry is playing
+    if (_currentlyPlayingFileId == entry.id) {
+      await _stopCurrentPlayback();
+      await Future.delayed(
+        const Duration(milliseconds: 200),
+      ); // Ensure file release
+    }
+
+    if (mounted) {
+      setState(() => _isTranscribing = true);
+      showCustomSnackBar(
+        context: context,
+        message: 'Transcribing "${entry.displayName}"...',
+      );
+    }
+
+    final Uri apiUri = Uri.parse(
+      "https://api.lemonfox.ai/v1/audio/transcriptions",
+    );
+    try {
+      var request = http.MultipartRequest('POST', apiUri);
+      request.headers['Authorization'] = 'Bearer $_lemonFoxApiKey';
+      request.files.add(
+        await http.MultipartFile.fromPath('file', entry.filePath),
+      );
+      request.fields['response_format'] = 'json'; // Or 'text'
+      // request.fields['language'] = 'english'; // Omit for auto-detection if supported
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> responseData = jsonDecode(response.body);
+        final String? transcriptText = responseData['text'];
+
+        if (transcriptText != null) {
+          final box = Hive.box<RecordingEntry>(hiddenRecordingsBoxName);
+          entry.transcription = transcriptText;
+          await box.put(
+            entry.id,
+            entry,
+          ); // This will trigger ValueListenableBuilder
+          if (mounted) {
+            showCustomSnackBar(
+              context: context,
+              message: 'Transcription complete!',
+              iconColor: Colors.green,
+            );
+          }
+        } else {
+          throw Exception('Transcription text not found in response.');
+        }
+      } else {
+        String errorMessage = "Error ${response.statusCode}";
+        try {
+          final Map<String, dynamic> errorData = jsonDecode(response.body);
+          errorMessage +=
+              "\n${errorData['detail'] ?? errorData['message'] ?? response.body}";
+        } catch (_) {
+          errorMessage += "\n${response.body}";
+        }
+        throw Exception(errorMessage);
+      }
+    } catch (e, s) {
+      print("[HiddenRecordingsScreen] Lemonfox transcription failed: $e\n$s");
+      if (mounted) {
+        showCustomSnackBar(
+          context: context,
+          message: 'Transcription failed: $e',
+          iconColor: Colors.red,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isTranscribing = false);
+      }
+    }
+  }
+
+  // --- Sharing Logic ---
+  Future<void> _shareRecordingFile(RecordingEntry entry) async {
+    if (entry.filePath.isEmpty) {
+      if (mounted)
+        showCustomSnackBar(
+          context: context,
+          message: 'Error: Recording file path is missing.',
+        );
+      return;
+    }
+    final File audioFile = File(entry.filePath);
+    if (!await audioFile.exists()) {
+      if (mounted)
+        showCustomSnackBar(
+          context: context,
+          message: 'Error: Recording file not found.',
+        );
+      return;
+    }
+
+    if (_currentlyPlayingFileId == entry.id) {
+      await _stopCurrentPlayback();
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+
+    final result = await Share.shareXFiles([
+      XFile(entry.filePath),
+    ], text: 'Hidden Echolog Recording: ${entry.displayName}');
+
+    if (mounted) {
+      if (result.status == ShareResultStatus.success) {
+        showCustomSnackBar(
+          context: context,
+          message: 'Recording shared!',
+          iconColor: Colors.green,
+        );
+      } else if (result.status != ShareResultStatus.dismissed) {
+        showCustomSnackBar(
+          context: context,
+          message: 'Sharing failed: ${result.status}',
           iconColor: Colors.red,
         );
       }
     }
+  }
+
+  Future<void> _shareTranscriptionText(RecordingEntry entry) async {
+    if (entry.transcription == null || entry.transcription!.trim().isEmpty) {
+      if (mounted)
+        showCustomSnackBar(
+          context: context,
+          message: 'No transcription available to share.',
+        );
+      return;
+    }
+
+    final result = await Share.share(
+      'Hidden Echolog Transcription for "${entry.displayName}":\n\n${entry.transcription}',
+      subject: 'Hidden Transcription: ${entry.displayName}',
+    );
+    if (mounted) {
+      if (result.status == ShareResultStatus.success) {
+        showCustomSnackBar(
+          context: context,
+          message: 'Transcription shared!',
+          iconColor: Colors.green,
+        );
+      }
+    }
+  }
+
+  Future<void> _showShareOptionsDialog(RecordingEntry entry) async {
+    final theme = Theme.of(context);
+    bool hasTranscription =
+        entry.transcription != null && entry.transcription!.trim().isNotEmpty;
+
+    if (_currentlyPlayingFileId == entry.id) {
+      await _stopCurrentPlayback();
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+
+    if (!mounted) return; // Check mounted before showing dialog
+
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor:
+              theme.dialogTheme.backgroundColor ?? theme.colorScheme.surface,
+          shape:
+              theme.dialogTheme.shape ??
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
+          title: Text(
+            'Share Options',
+            style:
+                theme.dialogTheme.titleTextStyle ??
+                GoogleFonts.poppins(
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface,
+                ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              ListTile(
+                leading: Icon(
+                  Icons.audiotrack_rounded,
+                  color: theme.colorScheme.primary,
+                ),
+                title: Text(
+                  'Share Audio Recording',
+                  style: GoogleFonts.poppins(
+                    color: theme.colorScheme.onSurface,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.of(dialogContext).pop();
+                  _shareRecordingFile(entry);
+                },
+              ),
+              if (hasTranscription)
+                ListTile(
+                  leading: Icon(
+                    Icons.description_rounded,
+                    color: theme.colorScheme.primary,
+                  ),
+                  title: Text(
+                    'Share Transcription',
+                    style: GoogleFonts.poppins(
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.of(dialogContext).pop();
+                    _shareTranscriptionText(entry);
+                  },
+                ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              style: theme.textButtonTheme.style,
+              child: const Text('Cancel'),
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -552,7 +780,6 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            // --- Content of HiddenRecordingSetupWidget (Category Selector and Status) ---
             Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -575,9 +802,7 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
                 if (_isRecordingHidden) const SizedBox(height: 20),
               ],
             ),
-            // --- End Content of HiddenRecordingSetupWidget ---
-            const SizedBox(height: 20), // Spacing
-            // --- Content of HiddenRecordingsListView (The List Itself) ---
+            const SizedBox(height: 20),
             Expanded(
               child: ValueListenableBuilder<Box<RecordingEntry>>(
                 valueListenable: hiddenRecordingsHiveBox.listenable(),
@@ -590,6 +815,8 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
                     (a, b) => b.dateRecorded.compareTo(a.dateRecorded),
                   );
 
+                  // Update isPlaying status based on _currentlyPlayingFileId
+                  // This ensures list items reflect the correct playback state
                   for (var rec in recordings) {
                     rec.isPlaying = (rec.id == _currentlyPlayingFileId);
                   }
@@ -611,8 +838,15 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
                     itemCount: recordings.length,
                     itemBuilder: (context, index) {
                       final entry = recordings[index];
+                      // Use a more specific key to help Flutter update items correctly,
+                      // especially when transcription or playback state changes.
+                      final itemKey = ValueKey(
+                        '${entry.id}_${entry.isPlaying}_${entry.transcription?.hashCode ?? 'no_transcription'}',
+                      );
                       return Dismissible(
-                        key: ValueKey(entry.id),
+                        key: ValueKey(
+                          'dismiss_${entry.id}',
+                        ), // Dismissible key should be stable for the item
                         direction: DismissDirection.endToStart,
                         background: Container(
                           decoration: BoxDecoration(
@@ -634,40 +868,21 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 4.0),
                           child: RecordingListItemWidget(
-                            onShare: (selectedEntry) {
-                              // Handle share action if needed
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Sharing "${selectedEntry.displayName}" is not supported in hidden recordings.',
-                                  ),
-                                ),
-                              );
-                            },
+                            key: itemKey, // Pass the more specific key here
                             entry: entry,
                             onPlayPause: (selectedEntry) =>
-                                _togglePlayRecordingItem(
-                                  selectedEntry,
-                                  recordings,
-                                ),
-                            onMoveToVault: (entry) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    '"${entry.displayName}" is already in the vault.',
-                                  ),
-                                ),
-                              );
-                              print(
-                                "Attempted to move an already hidden item to vault: ${entry.displayName}",
-                              );
-                              // Optionally, show a snackbar:
-                              // showCustomSnackBar(
-                              //   context: context,
-                              //   message: '"${entry.displayName}" is already in the hidden vault.',
-                              // );
+                                _togglePlayRecordingItem(selectedEntry),
+                            onTranscribe: _transcribeWithLemonFox, // WIRED UP
+                            onShare: _showShareOptionsDialog, // WIRED UP
+                            onMoveToVault: (selectedEntry) {
+                              if (mounted) {
+                                showCustomSnackBar(
+                                  context: context,
+                                  message:
+                                      '"${selectedEntry.displayName}" is already in the hidden vault.',
+                                );
+                              }
                             },
-                            // isDense: true, // Uncomment if you need dense layout
                           ),
                         ),
                       );
@@ -676,7 +891,6 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
                 },
               ),
             ),
-            // --- End Content of HiddenRecordingsListView ---
           ],
         ),
       );

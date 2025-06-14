@@ -1,9 +1,12 @@
+import 'dart:convert';
+
 import 'package:echolog/settings_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter_sound/flutter_sound.dart';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -28,6 +31,7 @@ import 'hidden_recordings_screen.dart';
 
 // Key for SharedPreferences
 const String PREF_HIDDEN_ACCESS_METHOD = 'selectedHiddenAccessTriggerMethod';
+final String _lemonFoxApiKey = "Sf8cPZsgkaVohAnV31DxsiSO9QiIiqbj";
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -38,6 +42,9 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Map<String, dynamic>? _selectedCategoryData;
+  // <-- IMPORTANT: Replace with your actual key.
+  bool _isTranscribingLemonFox =
+      false; // To show a global loading indicator if needed, or per-item
 
   final List<Map<String, dynamic>> _predefinedCategories = [
     {
@@ -114,6 +121,296 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _initializeRecorder();
     _initializePlayer();
     _loadHiddenAccessPreference(); // Load hidden access method preference
+  }
+
+  Future<void> _shareRecordingFile(RecordingEntry entry) async {
+    if (entry.filePath.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Error: Recording file path is missing.')),
+      );
+      return;
+    }
+    final File audioFile = File(entry.filePath);
+    if (!await audioFile.exists()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Error: Recording file not found.')),
+      );
+      return;
+    }
+
+    // Stop playback if this entry is playing or paused to release the file
+    if (_player != null &&
+        _isPlayerInitialized &&
+        _currentlyPlayingFileId == entry.id &&
+        (_player!.isPlaying || _player!.isPaused)) {
+      await _player!.stopPlayer();
+      if (mounted) {
+        setState(() {
+          _currentlyPlayingFileId = null;
+          // Player state is reset; UI will update entry's isPlaying status if needed.
+        });
+      }
+      // Add a small delay to ensure the file is released, especially on some platforms
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+
+    final result = await Share.shareXFiles([
+      XFile(entry.filePath),
+    ], text: 'Check out this audio recording: ${entry.displayName}');
+
+    if (result.status == ShareResultStatus.success) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Recording shared!')));
+    } else if (result.status == ShareResultStatus.dismissed) {
+      // User dismissed the share sheet
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Sharing failed: ${result.status}')),
+      );
+    }
+  }
+
+  Future<void> _shareTranscriptionText(RecordingEntry entry) async {
+    if (entry.transcription == null || entry.transcription!.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No transcription available to share.')),
+      );
+      return;
+    }
+
+    final result = await Share.share(
+      'Transcription for "${entry.displayName}":\n\n${entry.transcription}',
+      subject: 'Transcription: ${entry.displayName}',
+    );
+
+    if (result.status == ShareResultStatus.success) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Transcription shared!')));
+    }
+  }
+
+  Future<void> _showShareOptionsDialog(RecordingEntry entry) async {
+    final theme = Theme.of(context);
+    final bool hasTranscription =
+        entry.transcription != null && entry.transcription!.trim().isNotEmpty;
+
+    // Stop playback if this entry is playing or paused to release the file for audio sharing
+    // This is done preemptively here because the user might choose to share audio.
+    if (_player != null &&
+        _isPlayerInitialized &&
+        _currentlyPlayingFileId == entry.id &&
+        (_player!.isPlaying || _player!.isPaused)) {
+      await _player!.stopPlayer();
+      if (mounted) {
+        setState(() {
+          _currentlyPlayingFileId = null;
+          // Player state is reset.
+        });
+      }
+      await Future.delayed(
+        const Duration(milliseconds: 200),
+      ); // Ensure file release
+    }
+
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor:
+              theme.dialogTheme.backgroundColor ?? theme.colorScheme.surface,
+          shape:
+              theme.dialogTheme.shape ??
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
+          title: Text(
+            'Share Options',
+            style:
+                theme.dialogTheme.titleTextStyle ??
+                GoogleFonts.poppins(
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface,
+                ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              ListTile(
+                leading: Icon(
+                  Icons.audiotrack_rounded,
+                  color: theme.colorScheme.primary,
+                ),
+                title: Text(
+                  'Share Audio Recording',
+                  style: GoogleFonts.poppins(
+                    color: theme.colorScheme.onSurface,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.of(dialogContext).pop();
+                  _shareRecordingFile(entry);
+                },
+              ),
+              if (hasTranscription)
+                ListTile(
+                  leading: Icon(
+                    Icons.description_rounded,
+                    color: theme.colorScheme.primary,
+                  ),
+                  title: Text(
+                    'Share Transcription',
+                    style: GoogleFonts.poppins(
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.of(dialogContext).pop();
+                    _shareTranscriptionText(entry);
+                  },
+                ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              style: theme.textButtonTheme.style,
+              child: const Text('Cancel'),
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _transcribeWithLemonFox(RecordingEntry entry) async {
+    if (_lemonFoxApiKey == null || _lemonFoxApiKey.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Lemonfox API Key not set.')),
+      );
+      return;
+    }
+
+    if (entry.filePath.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Error: Recording file path is missing.')),
+      );
+      return;
+    }
+
+    final File audioFile = File(entry.filePath);
+    if (!await audioFile.exists()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Error: Recording file not found.')),
+      );
+      return;
+    }
+
+    // Stop playback if this entry is playing or paused to release the file
+    if (_player != null &&
+        _currentlyPlayingFileId == entry.id &&
+        (_player!.isPlaying || _player!.isPaused)) {
+      await _player!.stopPlayer();
+      // No need to update isPlaying in Hive here, as the list item will rebuild
+      // and get the correct state. The main goal is to release the file.
+      if (mounted) {
+        setState(() {
+          _currentlyPlayingFileId = null;
+          // _isRecordingPausedForPlayback was removed as it's an undefined variable.
+        });
+      }
+    }
+
+    // Indicate loading specific to this item (visual feedback in item itself is better)
+    // For now, a general loading state and SnackBar
+    setState(() {
+      _isTranscribingLemonFox = true;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Transcribing "${entry.displayName}" with Lemonfox...'),
+      ),
+    );
+
+    final Uri apiUri = Uri.parse(
+      "https://api.lemonfox.ai/v1/audio/transcriptions",
+    );
+
+    try {
+      var request = http.MultipartRequest('POST', apiUri);
+
+      request.headers['Authorization'] = 'Bearer $_lemonFoxApiKey';
+
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'file', // Field name from cURL example
+          entry.filePath,
+        ),
+      );
+
+      // Add other form fields from cURL example
+      request.fields['response_format'] = 'json'; // Or make this configurable
+      request.fields['response_format'] = 'json';
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> responseData = jsonDecode(response.body);
+        final String? transcriptText =
+            responseData['text']; // Based on JS example: data['text']
+
+        if (transcriptText != null) {
+          final box = Hive.box<RecordingEntry>(recordingsBoxName);
+          entry.transcription = transcriptText;
+          await box.put(entry.id, entry); // Save updated entry to Hive
+          // The ValueListenableBuilder will update the UI
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Transcription complete for "${entry.displayName}"!',
+              ),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        } else {
+          throw Exception('Transcription text not found in response.');
+        }
+      } else {
+        // Try to parse error message from Lemonfox if available
+        String errorMessage = "Error ${response.statusCode}";
+        try {
+          final Map<String, dynamic> errorData = jsonDecode(response.body);
+          if (errorData['detail'] != null) {
+            // Common error field name
+            errorMessage += "\n${errorData['detail']}";
+          } else if (errorData['message'] != null) {
+            errorMessage += "\n${errorData['message']}";
+          } else {
+            errorMessage += "\n${response.body}";
+          }
+        } catch (_) {
+          errorMessage +=
+              "\n${response.body}"; // Fallback if error body isn't JSON
+        }
+        throw Exception(errorMessage);
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Lemonfox transcription failed: $e')),
+      );
+      // Optionally clear any partial transcription or set an error state on the entry
+      // final box = Hive.box<RecordingEntry>(recordingsBoxName);
+      // entry.transcription = "Error: Transcription failed.";
+      // await box.put(entry.id, entry);
+    } finally {
+      setState(() {
+        _isTranscribingLemonFox = false;
+      });
+    }
   }
 
   Future<void> _shareRecording(RecordingEntry entry) async {
@@ -220,12 +517,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       id: entryToMove.id,
       filePath: entryToMove.filePath,
       displayName: entryToMove.displayName,
-      durationMillis: entryToMove.duration.inMilliseconds,
+      duration: entryToMove.duration,
       dateRecorded: entryToMove.dateRecorded,
       moodName: entryToMove.moodName,
-      moodColorValue: entryToMove.moodColor.value,
-      emoji: entryToMove.emoji,
-      moodIconColorValue: entryToMove.moodIconColor.value,
+      moodColor: entryToMove.moodColor,
+      moodEmoji: entryToMove.moodEmoji,
+      moodIconColor: entryToMove.moodIconColor,
       // isPlaying: false, // When moving, it's likely not playing in the new context
       // Add any other fields your RecordingEntry has
     );
@@ -554,7 +851,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     Duration duration,
     Map<String, dynamic> categoryData,
   ) {
-    final newEntry = RecordingEntry.create(
+    final newEntry = RecordingEntry(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       filePath: filePath,
       displayName: displayName,
@@ -563,7 +860,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       moodName: categoryData['name'] as String,
       moodColor: categoryData['color'] as Color,
       moodIconColor: categoryData['iconColor'] as Color,
-      emoji: categoryData['emoji'] as String? ?? '',
+      moodEmoji: categoryData['emoji'] as String? ?? '',
     );
 
     final box = Hive.box<RecordingEntry>(recordingsBoxName);
@@ -950,7 +1247,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 const SizedBox(height: 15),
                 Expanded(
                   child: RecordingsListView(
-                    onShare: _shareRecording,
+                    onTranscribe: _transcribeWithLemonFox,
+                    onShare: _showShareOptionsDialog,
                     onMoveToVault: _moveToVault,
                     recordingsBoxListenable: Hive.box<RecordingEntry>(
                       recordingsBoxName,

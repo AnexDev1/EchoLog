@@ -11,6 +11,8 @@ class RecordingsListView extends StatelessWidget {
   final FilterState currentFilters;
   final String? currentlyPlayingFileId;
   final Function(RecordingEntry) onShare; // Callback for sharing recordings
+  final Function(RecordingEntry)
+  onTranscribe; // Callback for transcribing recordings
   final Function(RecordingEntry) onMoveToVault;
   final Future<void> Function(
     RecordingEntry entry,
@@ -29,6 +31,7 @@ class RecordingsListView extends StatelessWidget {
     required this.onDismissRecording,
     required this.onMoveToVault,
     required this.onShare,
+    required this.onTranscribe,
   });
 
   @override
@@ -135,6 +138,7 @@ class RecordingsListView extends StatelessWidget {
               },
               child: RecordingListItemWidget(
                 onShare: onShare,
+                onTranscribe: onTranscribe,
                 onMoveToVault: onMoveToVault,
                 entry: entry,
                 onPlayPause: (selectedEntry) =>

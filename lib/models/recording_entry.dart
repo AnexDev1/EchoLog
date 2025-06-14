@@ -1,85 +1,64 @@
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 
-part 'recording_entry.g.dart';
+part 'recording_entry.g.dart'; // Ensure this line exists
 
-@HiveType(typeId: 0)
+@HiveType(
+  typeId: 0,
+) // Make sure your typeId is unique if you have other HiveObjects
 class RecordingEntry extends HiveObject {
   @HiveField(0)
-  final String id;
+  late String id;
 
   @HiveField(1)
-  final String filePath;
+  late String filePath;
 
   @HiveField(2)
-  String displayName;
+  late String displayName;
 
   @HiveField(3)
-  final int durationMillis; // Hive stores this int
+  late Duration duration;
 
   @HiveField(4)
-  final DateTime dateRecorded;
+  late DateTime dateRecorded;
 
   @HiveField(5)
-  final String moodName;
+  late String moodName;
 
   @HiveField(6)
-  final int moodColorValue; // Hive stores this int
+  late Color moodColor; // You'll need a TypeAdapter for Color or store it as int
 
   @HiveField(7)
-  final int moodIconColorValue; // Hive stores this int
+  late String moodEmoji;
 
   @HiveField(8)
-  final String emoji;
+  late Color moodIconColor; // Same as moodColor regarding TypeAdapter
 
-  @HiveField(9, defaultValue: false)
+  @HiveField(9)
   bool isPlaying;
 
-  // Primary constructor: Takes primitive types that Hive stores.
-  // The generated adapter will use this constructor.
+  @HiveField(10) // NEW FIELD
+  String? transcription; // To store the transcription text
+
   RecordingEntry({
     required this.id,
     required this.filePath,
     required this.displayName,
-    required this.durationMillis, // Changed from Duration to int
+    required this.duration,
     required this.dateRecorded,
     required this.moodName,
-    required this.moodColorValue, // Changed from Color to int
-    required this.moodIconColorValue, // Changed from Color to int
-    required this.emoji,
+    required this.moodColor,
+    required this.moodEmoji,
+    required this.moodIconColor,
     this.isPlaying = false,
+    this.transcription, // NEW
   });
 
-  // Factory constructor for creating instances in your app code
-  // using Duration and Color objects.
-  factory RecordingEntry.create({
-    required String id,
-    required String filePath,
-    required String displayName,
-    required Duration duration,
-    required DateTime dateRecorded,
-    required String moodName,
-    required Color moodColor,
-    required Color moodIconColor,
-    required String emoji,
-    bool isPlaying = false,
-  }) {
-    return RecordingEntry(
-      id: id,
-      filePath: filePath,
-      displayName: displayName,
-      durationMillis: duration.inMilliseconds, // Convert Duration to int
-      dateRecorded: dateRecorded,
-      moodName: moodName,
-      moodColorValue: moodColor.value, // Convert Color to int
-      moodIconColorValue: moodIconColor.value, // Convert Color to int
-      emoji: emoji,
-      isPlaying: isPlaying,
-    );
-  }
-
-  // Getters to convert stored int values back to Duration/Color for app use
-  Duration get duration => Duration(milliseconds: durationMillis);
-  Color get moodColor => Color(moodColorValue);
-  Color get moodIconColor => Color(moodIconColorValue);
+  // If you don't have a ColorAdapter, you might store colors as int:
+  // @HiveField(6)
+  // late int moodColorValue;
+  // @HiveField(8)
+  // late int moodIconColorValue;
+  // Color get moodColor => Color(moodColorValue);
+  // Color get moodIconColor => Color(moodIconColorValue);
 }
