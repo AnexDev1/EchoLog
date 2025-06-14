@@ -9,7 +9,7 @@ import 'models/custom_category.dart'; // Import CustomCategory model
 const String recordingsBoxName = 'recordingsBox';
 const String customCategoriesBoxName =
     'customCategoriesBox'; // Define new box name
-
+const String hiddenRecordingsBoxName = 'hiddenRecordingsBox';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -32,7 +32,7 @@ Future<void> main() async {
   await Hive.openBox<CustomCategory>(
     customCategoriesBoxName,
   ); // Open the new box
-
+  await Hive.openBox<RecordingEntry>(hiddenRecordingsBoxName);
   runApp(const MyApp());
 }
 

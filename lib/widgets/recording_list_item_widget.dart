@@ -24,7 +24,7 @@ class RecordingListItemWidget extends StatelessWidget {
         230,
       ), // Or theme.colorScheme.surfaceVariant
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12.0),
+        borderRadius: BorderRadius.circular(20.0),
         side: BorderSide(
           color: entry.moodColor.withOpacity(0.7),
           width: 1.5,
@@ -95,7 +95,7 @@ class RecordingListItemWidget extends StatelessWidget {
             entry.isPlaying
                 ? Icons.pause_circle_filled_rounded
                 : Icons.play_circle_fill_rounded,
-            color: theme.colorScheme.primary,
+            color: Colors.white,
             size: 32,
           ),
           splashRadius: 24.0,

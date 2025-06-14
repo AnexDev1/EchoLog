@@ -12,12 +12,17 @@ import 'models/filter_state.dart';
 import 'models/custom_category.dart';
 import 'widgets/category_selector_widget.dart';
 import 'widgets/recording_controls_widget.dart';
-import 'widgets/recording_list_item_widget.dart';
+// import 'widgets/recording_list_item_widget.dart'; // No longer directly used here
 import 'widgets/save_recording_dialog.dart';
 import 'widgets/filter_bottom_sheet_widget.dart';
-// import 'utils/duration_formatter.dart'; // Not directly used here, but good to keep if other parts use it
 import 'utils/custom_snackbar.dart';
 import 'main.dart'; // For recordingsBoxName and customCategoriesBoxName
+import 'widgets/recordings_list_view.dart'; // <-- IMPORT FOR THE NEW WIDGET
+
+import 'services/password_service.dart';
+import 'widgets/create_password_dialog.dart';
+import 'widgets/enter_password_dialog.dart';
+import 'hidden_recordings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -76,13 +81,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String? _currentlyPlayingFileId;
   FilterState _currentFilters = FilterState();
 
+  final PasswordService _passwordService = PasswordService();
+  double _initialPinchScale = 1.0;
+  int _pointerCount = 0;
+  bool _navigatingToHidden = false;
+
   List<Map<String, dynamic>> _getAllCategories(
     Box<CustomCategory> customCategoryBox,
   ) {
     final customCategories = customCategoryBox.values
         .map((c) => c.toMap())
         .toList();
-    // Predefined categories already have 'isCustom' and 'id'
     return [..._predefinedCategories, ...customCategories];
   }
 
@@ -396,11 +405,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  // Updated to accept nullable category
   void _onCategorySelected(Map<String, dynamic>? category) {
     if (_isRecording) return;
     setState(() {
-      _selectedCategoryData = category; // This will be null if category is null
+      _selectedCategoryData = category;
     });
   }
 
@@ -449,253 +457,276 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
+  void _handleScaleStart(ScaleStartDetails details) {
+    _initialPinchScale = 1.0;
+    _pointerCount = details.pointerCount;
+  }
+
+  void _handleScaleUpdate(ScaleUpdateDetails details) async {
+    if (_navigatingToHidden || _pointerCount != 2) {
+      return;
+    }
+
+    if (_pointerCount == 2 &&
+        details.scale < 0.7 &&
+        _initialPinchScale >= 1.0) {
+      setState(() {
+        _navigatingToHidden = true;
+        _initialPinchScale = details.scale;
+      });
+
+      bool hasPassword = await _passwordService.hasPassword();
+      if (!mounted) {
+        _resetPinchNavigationFlags(didNavigate: false);
+        return;
+      }
+
+      if (hasPassword) {
+        print("[HomeScreen] Password exists. Showing EnterPasswordDialog.");
+        showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (BuildContext dialogContext) {
+            return EnterPasswordDialog(
+              passwordService: _passwordService,
+              onPasswordEntered: (bool passwordCorrect) {
+                print(
+                  "[HomeScreen] onPasswordEntered callback. passwordCorrect: $passwordCorrect",
+                );
+                if (passwordCorrect) {
+                  print(
+                    "[HomeScreen] Password correct. Attempting to navigate...",
+                  );
+                  try {
+                    Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                const HiddenRecordingsScreen(),
+                          ),
+                        )
+                        .then((_) {
+                          print(
+                            "[HomeScreen] Navigation to HiddenRecordingsScreen completed or screen popped.",
+                          );
+                          _resetPinchNavigationFlags();
+                        })
+                        .catchError((e, s) {
+                          print(
+                            "[HomeScreen] Error during or after navigation: $e",
+                          );
+                          print(s);
+                          _resetPinchNavigationFlags(didNavigate: false);
+                        });
+                  } catch (e, s) {
+                    print("[HomeScreen] Exception during Navigator.push: $e");
+                    print(s);
+                    _resetPinchNavigationFlags(didNavigate: false);
+                  }
+                } else {
+                  print(
+                    "[HomeScreen] Password incorrect or dialog cancelled by user.",
+                  );
+                  _resetPinchNavigationFlags(didNavigate: false);
+                }
+              },
+            );
+          },
+        );
+      } else {
+        print("[HomeScreen] No password. Showing CreatePasswordDialog.");
+        showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (BuildContext dialogContext) {
+            return CreatePasswordDialog(
+              passwordService: _passwordService,
+              onPasswordSet: (bool passwordCreated) {
+                if (passwordCreated) {
+                  if (mounted) {
+                    showCustomSnackBar(
+                      context: context,
+                      message:
+                          "Password set! Pinch again to access hidden notes.",
+                      iconColor: Colors.green,
+                      duration: const Duration(seconds: 3),
+                    );
+                  }
+                }
+                _resetPinchNavigationFlags(didNavigate: false);
+              },
+            );
+          },
+        );
+      }
+    } else if (details.scale > _initialPinchScale && _pointerCount == 2) {
+      _initialPinchScale = details.scale;
+    }
+  }
+
+  void _resetPinchNavigationFlags({bool didNavigate = true}) {
+    if (mounted) {
+      setState(() {
+        _initialPinchScale = 1.0;
+        _pointerCount = 0;
+        _navigatingToHidden = false;
+      });
+      print(
+        "[HomeScreen] Pinch navigation flags reset. _navigatingToHidden: $_navigatingToHidden",
+      );
+    }
+  }
+
+  void _handleScaleEnd(ScaleEndDetails details) {
+    if (!_navigatingToHidden) {
+      _resetPinchNavigationFlags(didNavigate: false);
+    }
+  }
+
+  // NEW METHOD TO HANDLE DISMISSAL LOGIC
+  void _handleDismissRecording(RecordingEntry entry) {
+    final theme = Theme.of(context);
+    final box = Hive.box<RecordingEntry>(recordingsBoxName);
+    final String deletedFilePath = entry.filePath;
+
+    box.delete(entry.id);
+
+    if (_currentlyPlayingFileId == entry.id &&
+        _player != null &&
+        _player!.isPlaying) {
+      _player!.stopPlayer().then((_) {
+        if (mounted) setState(() => _currentlyPlayingFileId = null);
+      });
+    }
+
+    showCustomSnackBar(
+      context: context,
+      message: '"${entry.displayName}" deleted.',
+      actionLabel: 'UNDO',
+      onActionPressed: () {
+        box.put(entry.id, entry);
+      },
+      duration: const Duration(seconds: 4),
+      leadingIcon: Icons.delete_forever_rounded,
+      iconColor: theme.colorScheme.secondary,
+    ).closed.then((reason) {
+      if (reason != SnackBarClosedReason.action) {
+        if (!box.containsKey(entry.id)) {
+          _deleteRecordingFile(deletedFilePath);
+        }
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          'Echolog',
-          style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
+    return GestureDetector(
+      onScaleStart: _handleScaleStart,
+      onScaleUpdate: _handleScaleUpdate,
+      onScaleEnd: _handleScaleEnd,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(
+            'Echolog',
+            style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
+          ),
+          centerTitle: true,
         ),
-        centerTitle: true,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: ValueListenableBuilder<Box<CustomCategory>>(
-          valueListenable: Hive.box<CustomCategory>(
-            customCategoriesBoxName,
-          ).listenable(),
-          builder: (context, customCategoryBox, _) {
-            final allDisplayCategories = _getAllCategories(customCategoryBox);
+        body: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: ValueListenableBuilder<Box<CustomCategory>>(
+            valueListenable: Hive.box<CustomCategory>(
+              customCategoriesBoxName,
+            ).listenable(),
+            builder: (context, customCategoryBox, _) {
+              final allDisplayCategories = _getAllCategories(customCategoryBox);
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                Center(
-                  child: Text(
-                    'How are you doing?',
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.poppins(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w600,
-                      color: theme.colorScheme.onBackground,
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Center(
+                    child: Text(
+                      'How are you doing?',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.poppins(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.onBackground,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 25),
-                CategorySelectorWidget(
-                  predefinedCategories:
-                      _predefinedCategories, // Pass predefined separately
-                  selectedCategoryData: _selectedCategoryData,
-                  isRecording: _isRecording,
-                  onCategorySelected:
-                      _onCategorySelected, // Pass the updated method
-                ),
-                const SizedBox(height: 40),
-                Center(
-                  child: RecordingControlsWidget(
-                    isRecording: _isRecording,
-                    isRecordingPaused: _isRecordingPaused,
-                    recordingDuration: _recordingDuration,
+                  const SizedBox(height: 25),
+                  CategorySelectorWidget(
+                    predefinedCategories: _predefinedCategories,
                     selectedCategoryData: _selectedCategoryData,
-                    isRecorderInitialized: _isRecorderInitialized,
-                    onStartStopRecording: _startOrStopRecording,
-                    onTogglePausePlayRecording: _togglePausePlayRecording,
-                    theme: theme,
+                    isRecording: _isRecording,
+                    onCategorySelected: _onCategorySelected,
                   ),
-                ),
-                const SizedBox(height: 40),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Your Recordings',
-                        style: GoogleFonts.poppins(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w600,
-                          color: theme.colorScheme.onBackground,
-                        ),
-                      ),
-                      IconButton(
-                        icon: Icon(
-                          _currentFilters.isAnyFilterActive
-                              ? Icons.filter_alt_rounded
-                              : Icons.filter_alt_off_outlined,
-                          color: _currentFilters.isAnyFilterActive
-                              ? theme.colorScheme.primary
-                              : theme.colorScheme.onBackground.withOpacity(0.7),
-                        ),
-                        tooltip: 'Filter Recordings',
-                        onPressed: () =>
-                            _showAdvancedFilterSheet(allDisplayCategories),
-                      ),
-                    ],
+                  const SizedBox(height: 40),
+                  Center(
+                    child: RecordingControlsWidget(
+                      isRecording: _isRecording,
+                      isRecordingPaused: _isRecordingPaused,
+                      recordingDuration: _recordingDuration,
+                      selectedCategoryData: _selectedCategoryData,
+                      isRecorderInitialized: _isRecorderInitialized,
+                      onStartStopRecording: _startOrStopRecording,
+                      onTogglePausePlayRecording: _togglePausePlayRecording,
+                      theme: theme,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 15),
-                Expanded(
-                  child: ValueListenableBuilder<Box<RecordingEntry>>(
-                    valueListenable: Hive.box<RecordingEntry>(
-                      recordingsBoxName,
-                    ).listenable(),
-                    builder: (context, box, _) {
-                      List<RecordingEntry> recordings = box.values.toList();
-
-                      if (_currentFilters.moodName != null) {
-                        recordings = recordings
-                            .where(
-                              (entry) =>
-                                  entry.moodName == _currentFilters.moodName,
-                            )
-                            .toList();
-                      }
-                      if (_currentFilters.searchNameQuery != null &&
-                          _currentFilters.searchNameQuery!.isNotEmpty) {
-                        final query = _currentFilters.searchNameQuery!
-                            .toLowerCase();
-                        recordings = recordings
-                            .where(
-                              (entry) => entry.displayName
-                                  .toLowerCase()
-                                  .contains(query),
-                            )
-                            .toList();
-                      }
-                      if (_currentFilters.durationRangeSeconds != null) {
-                        recordings = recordings.where((entry) {
-                          final durationInSeconds = entry.duration.inSeconds
-                              .toDouble();
-                          return durationInSeconds >=
-                                  _currentFilters.durationRangeSeconds!.start &&
-                              durationInSeconds <=
-                                  _currentFilters.durationRangeSeconds!.end;
-                        }).toList();
-                      }
-                      if (_currentFilters.dateRecordedRange != null) {
-                        recordings = recordings.where((entry) {
-                          final recordDate = DateTime(
-                            entry.dateRecorded.year,
-                            entry.dateRecorded.month,
-                            entry.dateRecorded.day,
-                          );
-                          final startDate = DateTime(
-                            _currentFilters.dateRecordedRange!.start.year,
-                            _currentFilters.dateRecordedRange!.start.month,
-                            _currentFilters.dateRecordedRange!.start.day,
-                          );
-                          final endDate = DateTime(
-                            _currentFilters.dateRecordedRange!.end.year,
-                            _currentFilters.dateRecordedRange!.end.month,
-                            _currentFilters.dateRecordedRange!.end.day,
-                          );
-                          return !recordDate.isBefore(startDate) &&
-                              !recordDate.isAfter(endDate);
-                        }).toList();
-                      }
-
-                      for (var rec in recordings) {
-                        if (rec.id != _currentlyPlayingFileId) {
-                          rec.isPlaying = false;
-                        }
-                      }
-                      recordings.sort(
-                        (a, b) => b.dateRecorded.compareTo(a.dateRecorded),
-                      );
-
-                      if (recordings.isEmpty) {
-                        return Center(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 20.0),
-                            child: Text(
-                              _currentFilters.isAnyFilterActive
-                                  ? 'No recordings match your filters.\nTry adjusting or clearing them.'
-                                  : 'No recordings yet.\nTap the microphone to start!',
-                              textAlign: TextAlign.center,
-                              style: GoogleFonts.poppins(
-                                color: Colors.grey.shade500,
-                                fontSize: 16,
-                              ),
-                            ),
+                  const SizedBox(height: 40),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Your Recordings',
+                          style: GoogleFonts.poppins(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                            color: theme.colorScheme.onBackground,
                           ),
-                        );
-                      }
-                      return ListView.builder(
-                        itemCount: recordings.length,
-                        itemBuilder: (context, index) {
-                          final entry = recordings[index];
-                          return Dismissible(
-                            key: ValueKey(entry.id),
-                            direction: DismissDirection.endToStart,
-                            background: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.red.shade700,
-                                borderRadius: BorderRadius.circular(12.0),
-                              ),
-                              margin: const EdgeInsets.symmetric(vertical: 6.0),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                              ),
-                              alignment: Alignment.centerRight,
-                              child: const Icon(
-                                Icons.delete_sweep_outlined,
-                                color: Colors.white,
-                                size: 28,
-                              ),
-                            ),
-                            onDismissed: (direction) {
-                              final RecordingEntry deletedEntry = entry;
-                              final String deletedFilePath = entry.filePath;
-                              box.delete(entry.id);
-                              if (_currentlyPlayingFileId == deletedEntry.id &&
-                                  _player != null &&
-                                  _player!.isPlaying) {
-                                _player!.stopPlayer().then((_) {
-                                  if (mounted)
-                                    setState(
-                                      () => _currentlyPlayingFileId = null,
-                                    );
-                                });
-                              }
-                              showCustomSnackBar(
-                                context: context,
-                                message:
-                                    '"${deletedEntry.displayName}" deleted.',
-                                actionLabel: 'UNDO',
-                                onActionPressed: () {
-                                  box.put(deletedEntry.id, deletedEntry);
-                                },
-                                duration: const Duration(seconds: 4),
-                                leadingIcon: Icons.delete_forever_rounded,
-                                iconColor: theme.colorScheme.secondary,
-                              ).closed.then((reason) {
-                                if (reason != SnackBarClosedReason.action) {
-                                  _deleteRecordingFile(deletedFilePath);
-                                }
-                              });
-                            },
-                            child: RecordingListItemWidget(
-                              entry: entry,
-                              onPlayPause: (selectedEntry) =>
-                                  _togglePlayRecordingItem(
-                                    selectedEntry,
-                                    recordings,
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            _currentFilters.isAnyFilterActive
+                                ? Icons.filter_alt_rounded
+                                : Icons.filter_alt_off_outlined,
+                            color: _currentFilters.isAnyFilterActive
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.onBackground.withOpacity(
+                                    0.7,
                                   ),
-                              theme: theme,
-                            ),
-                          );
-                        },
-                      );
-                    },
+                          ),
+                          tooltip: 'Filter Recordings',
+                          onPressed: () =>
+                              _showAdvancedFilterSheet(allDisplayCategories),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
+                  const SizedBox(height: 15),
+                  Expanded(
+                    child: RecordingsListView(
+                      // <-- USING THE NEW WIDGET
+                      recordingsBoxListenable: Hive.box<RecordingEntry>(
+                        recordingsBoxName,
+                      ).listenable(),
+                      currentFilters: _currentFilters,
+                      onTogglePlay: _togglePlayRecordingItem,
+                      onDismissRecording: _handleDismissRecording,
+                      currentlyPlayingFileId: _currentlyPlayingFileId,
+                    ),
+                  ), // Closes Expanded
+                ], // Closes children list of Column
+              ); // Closes Column
+            }, // Closes builder of ValueListenableBuilder
+          ), // Closes ValueListenableBuilder
+        ), // Closes Padding (body of Scaffold)
+      ), // Closes Scaffold
+    ); // Closes GestureDetector (root of build method)
+  } // Closes build method
+} // Closes _HomeScreenState class
