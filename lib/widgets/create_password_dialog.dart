@@ -74,7 +74,7 @@ class _CreatePasswordDialogState extends State<CreatePasswordDialog> {
           // If setPassword completes without throwing, assume success.
           // Check mounted after an async gap before interacting with context.
           if (mounted) {
-            Navigator.of(context).pop();
+            Navigator.of(context).pop(true);
             widget.onPasswordSet(true);
           }
         } catch (e) {

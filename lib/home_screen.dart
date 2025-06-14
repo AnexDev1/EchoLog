@@ -1,3 +1,4 @@
+import 'package:echolog/settings_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'dart:async';
@@ -6,23 +7,26 @@ import 'package:flutter_sound/flutter_sound.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // Added for preferences
 
 import 'models/recording_entry.dart';
 import 'models/filter_state.dart';
 import 'models/custom_category.dart';
 import 'widgets/category_selector_widget.dart';
 import 'widgets/recording_controls_widget.dart';
-// import 'widgets/recording_list_item_widget.dart'; // No longer directly used here
 import 'widgets/save_recording_dialog.dart';
 import 'widgets/filter_bottom_sheet_widget.dart';
 import 'utils/custom_snackbar.dart';
 import 'main.dart'; // For recordingsBoxName and customCategoriesBoxName
-import 'widgets/recordings_list_view.dart'; // <-- IMPORT FOR THE NEW WIDGET
+import 'widgets/recordings_list_view.dart';
 
 import 'services/password_service.dart';
 import 'widgets/create_password_dialog.dart';
 import 'widgets/enter_password_dialog.dart';
 import 'hidden_recordings_screen.dart';
+
+// Key for SharedPreferences
+const String PREF_HIDDEN_ACCESS_METHOD = 'selectedHiddenAccessTriggerMethod';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -82,9 +86,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   FilterState _currentFilters = FilterState();
 
   final PasswordService _passwordService = PasswordService();
-  double _initialPinchScale = 1.0;
-  int _pointerCount = 0;
-  bool _navigatingToHidden = false;
+
+  // --- Hidden Vault Access State ---
+  HiddenAccessTriggerMethod _selectedMethod =
+      HiddenAccessTriggerMethod.longPressAppBar; // Default
+  bool _isGestureAccessActive = false; // Debounce for pinch/tap gestures
+  int _tapCount = 0;
+  Timer? _tapTimer;
+  final int _tripleTapMilliseconds = 500;
+  // --- End Hidden Vault Access State ---
 
   List<Map<String, dynamic>> _getAllCategories(
     Box<CustomCategory> customCategoryBox,
@@ -102,6 +112,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _player = FlutterSoundPlayer();
     _initializeRecorder();
     _initializePlayer();
+    _loadHiddenAccessPreference(); // Load hidden access method preference
   }
 
   Future<void> _initializeRecorder() async {
@@ -150,6 +161,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void dispose() {
     _recordingTimer?.cancel();
+    _tapTimer?.cancel(); // Cancel tap timer
     _recorder?.closeRecorder().catchError(
       (e) => print("Error closing recorder: $e"),
     );
@@ -158,6 +170,136 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _player = null;
     super.dispose();
   }
+
+  // --- Hidden Vault Access Methods ---
+  Future<void> _loadHiddenAccessPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    final methodName = prefs.getString(PREF_HIDDEN_ACCESS_METHOD);
+    HiddenAccessTriggerMethod loadedMethod =
+        HiddenAccessTriggerMethod.longPressAppBar; // Default
+    if (methodName != null) {
+      try {
+        loadedMethod = HiddenAccessTriggerMethod.values.firstWhere(
+          (e) => e.toString() == methodName,
+          orElse: () => HiddenAccessTriggerMethod.longPressAppBar,
+        );
+      } catch (e) {
+        loadedMethod = HiddenAccessTriggerMethod.longPressAppBar;
+      }
+    }
+    if (!HiddenAccessTriggerMethod.values.contains(loadedMethod)) {
+      loadedMethod = HiddenAccessTriggerMethod.longPressAppBar;
+    }
+    if (mounted && _selectedMethod != loadedMethod) {
+      setState(() {
+        _selectedMethod = loadedMethod;
+      });
+    } else if (!mounted && _selectedMethod != loadedMethod) {
+      _selectedMethod = loadedMethod;
+    }
+    print("Loaded hidden access method: $_selectedMethod");
+  }
+
+  String _getHiddenAccessMethodDescription(HiddenAccessTriggerMethod method) {
+    switch (method) {
+      case HiddenAccessTriggerMethod.longPressAppBar:
+        return "Long-press (Hold) App Bar";
+      case HiddenAccessTriggerMethod.tripleTapAppBar:
+        return "Triple-tap App Bar";
+      case HiddenAccessTriggerMethod.pinchInScreen:
+        return "Pinch In on Screen";
+      case HiddenAccessTriggerMethod.pinchOutScreen:
+        return "Pinch Out on Screen";
+    }
+  }
+
+  Future<void> _triggerHiddenScreenAccess() async {
+    if (_isGestureAccessActive || !mounted) return; // Debounce
+    setState(() => _isGestureAccessActive = true);
+    print("Attempting to trigger hidden screen access via $_selectedMethod...");
+
+    _tapCount = 0; // Reset tap count for gesture-based triggers
+    _tapTimer?.cancel();
+
+    bool hasPassword = await _passwordService.hasPassword();
+    if (!mounted) {
+      _resetGestureAccessFlags();
+      return;
+    }
+
+    if (hasPassword) {
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext dialogContext) {
+          return EnterPasswordDialog(
+            passwordService: _passwordService,
+            onPasswordEntered: (bool passwordCorrect) {
+              if (passwordCorrect) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const HiddenRecordingsScreen(),
+                  ),
+                ).then((_) => _resetGestureAccessFlags());
+              } else {
+                _resetGestureAccessFlags();
+              }
+            },
+          );
+        },
+      );
+    } else {
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext dialogContext) {
+          return CreatePasswordDialog(
+            passwordService: _passwordService,
+            onPasswordSet: (bool passwordCreated) {
+              if (passwordCreated && mounted) {
+                showCustomSnackBar(
+                  context: context,
+                  message: "Password set! Trigger gesture again to access.",
+                  iconColor: Colors.green,
+                  duration: const Duration(seconds: 3),
+                );
+              }
+              _resetGestureAccessFlags();
+            },
+          );
+        },
+      );
+    }
+  }
+
+  void _resetGestureAccessFlags() {
+    if (mounted) {
+      setState(() {
+        _isGestureAccessActive = false;
+      });
+      print("Gesture access flags reset.");
+    }
+  }
+
+  void _handleTripleTap() {
+    if (_isGestureAccessActive) return;
+    _tapCount++;
+    _tapTimer?.cancel();
+
+    if (_tapCount == 3) {
+      print("Triple Tap on AppBar detected!");
+      _triggerHiddenScreenAccess(); // This will set _isGestureAccessActive
+      _tapCount = 0;
+    } else {
+      _tapTimer = Timer(Duration(milliseconds: _tripleTapMilliseconds), () {
+        if (mounted) {
+          _tapCount = 0;
+        }
+      });
+    }
+  }
+  // --- End Hidden Vault Access Methods ---
 
   Future<void> _startOrStopRecording() async {
     if (!_isRecorderInitialized) {
@@ -457,133 +599,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  void _handleScaleStart(ScaleStartDetails details) {
-    _initialPinchScale = 1.0;
-    _pointerCount = details.pointerCount;
-  }
-
-  void _handleScaleUpdate(ScaleUpdateDetails details) async {
-    if (_navigatingToHidden || _pointerCount != 2) {
-      return;
-    }
-
-    if (_pointerCount == 2 &&
-        details.scale < 0.7 &&
-        _initialPinchScale >= 1.0) {
-      setState(() {
-        _navigatingToHidden = true;
-        _initialPinchScale = details.scale;
-      });
-
-      bool hasPassword = await _passwordService.hasPassword();
-      if (!mounted) {
-        _resetPinchNavigationFlags(didNavigate: false);
-        return;
-      }
-
-      if (hasPassword) {
-        print("[HomeScreen] Password exists. Showing EnterPasswordDialog.");
-        showDialog<void>(
-          context: context,
-          barrierDismissible: false,
-          builder: (BuildContext dialogContext) {
-            return EnterPasswordDialog(
-              passwordService: _passwordService,
-              onPasswordEntered: (bool passwordCorrect) {
-                print(
-                  "[HomeScreen] onPasswordEntered callback. passwordCorrect: $passwordCorrect",
-                );
-                if (passwordCorrect) {
-                  print(
-                    "[HomeScreen] Password correct. Attempting to navigate...",
-                  );
-                  try {
-                    Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                const HiddenRecordingsScreen(),
-                          ),
-                        )
-                        .then((_) {
-                          print(
-                            "[HomeScreen] Navigation to HiddenRecordingsScreen completed or screen popped.",
-                          );
-                          _resetPinchNavigationFlags();
-                        })
-                        .catchError((e, s) {
-                          print(
-                            "[HomeScreen] Error during or after navigation: $e",
-                          );
-                          print(s);
-                          _resetPinchNavigationFlags(didNavigate: false);
-                        });
-                  } catch (e, s) {
-                    print("[HomeScreen] Exception during Navigator.push: $e");
-                    print(s);
-                    _resetPinchNavigationFlags(didNavigate: false);
-                  }
-                } else {
-                  print(
-                    "[HomeScreen] Password incorrect or dialog cancelled by user.",
-                  );
-                  _resetPinchNavigationFlags(didNavigate: false);
-                }
-              },
-            );
-          },
-        );
-      } else {
-        print("[HomeScreen] No password. Showing CreatePasswordDialog.");
-        showDialog<void>(
-          context: context,
-          barrierDismissible: false,
-          builder: (BuildContext dialogContext) {
-            return CreatePasswordDialog(
-              passwordService: _passwordService,
-              onPasswordSet: (bool passwordCreated) {
-                if (passwordCreated) {
-                  if (mounted) {
-                    showCustomSnackBar(
-                      context: context,
-                      message:
-                          "Password set! Pinch again to access hidden notes.",
-                      iconColor: Colors.green,
-                      duration: const Duration(seconds: 3),
-                    );
-                  }
-                }
-                _resetPinchNavigationFlags(didNavigate: false);
-              },
-            );
-          },
-        );
-      }
-    } else if (details.scale > _initialPinchScale && _pointerCount == 2) {
-      _initialPinchScale = details.scale;
-    }
-  }
-
-  void _resetPinchNavigationFlags({bool didNavigate = true}) {
-    if (mounted) {
-      setState(() {
-        _initialPinchScale = 1.0;
-        _pointerCount = 0;
-        _navigatingToHidden = false;
-      });
-      print(
-        "[HomeScreen] Pinch navigation flags reset. _navigatingToHidden: $_navigatingToHidden",
-      );
-    }
-  }
-
-  void _handleScaleEnd(ScaleEndDetails details) {
-    if (!_navigatingToHidden) {
-      _resetPinchNavigationFlags(didNavigate: false);
-    }
-  }
-
-  // NEW METHOD TO HANDLE DISMISSAL LOGIC
   void _handleDismissRecording(RecordingEntry entry) {
     final theme = Theme.of(context);
     final box = Hive.box<RecordingEntry>(recordingsBoxName);
@@ -618,115 +633,208 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
   }
 
+  // --- Pinch Gesture Handlers for Screen Body ---
+  void _handleScreenScaleStart(ScaleStartDetails details) {
+    if (_selectedMethod != HiddenAccessTriggerMethod.pinchInScreen &&
+        _selectedMethod != HiddenAccessTriggerMethod.pinchOutScreen)
+      return;
+    if (details.pointerCount < 2) return;
+    // _isGestureAccessActive is already used by _triggerHiddenScreenAccess for debounce
+    // No need to set it here, let _triggerHiddenScreenAccess handle it.
+    print("Screen pinch gesture started");
+  }
+
+  void _handleScreenScaleUpdate(ScaleUpdateDetails details) {
+    if (_isGestureAccessActive) return; // Already processing a gesture
+    if (_selectedMethod != HiddenAccessTriggerMethod.pinchInScreen &&
+        _selectedMethod != HiddenAccessTriggerMethod.pinchOutScreen)
+      return;
+    if (details.pointerCount < 2) return;
+
+    final currentScale = details.scale;
+    print("Screen pinch update: scale = $currentScale");
+
+    if (_selectedMethod == HiddenAccessTriggerMethod.pinchInScreen &&
+        currentScale < 0.7) {
+      print("Pinch In on Screen detected!");
+      _triggerHiddenScreenAccess(); // This will set _isGestureAccessActive
+    } else if (_selectedMethod == HiddenAccessTriggerMethod.pinchOutScreen &&
+        currentScale > 1.5) {
+      print("Pinch Out on Screen detected!");
+      _triggerHiddenScreenAccess(); // This will set _isGestureAccessActive
+    }
+  }
+
+  void _handleScreenScaleEnd(ScaleEndDetails details) {
+    if (_selectedMethod != HiddenAccessTriggerMethod.pinchInScreen &&
+        _selectedMethod != HiddenAccessTriggerMethod.pinchOutScreen)
+      return;
+    // _isGestureAccessActive is reset by _triggerHiddenScreenAccess flow
+    print("Screen pinch gesture ended");
+  }
+  // --- End Pinch Gesture Handlers ---
+
+  Widget _buildAppBar(BuildContext context) {
+    // Added context parameter
+    final theme = Theme.of(context);
+    Widget appBarWidget = AppBar(
+      title: Text(
+        'Echolog',
+        style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
+      ),
+      centerTitle: true,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.settings_outlined),
+          tooltip: 'Settings',
+          onPressed: () async {
+            await Navigator.of(context).push(
+              MaterialPageRoute(builder: (context) => const SettingsScreen()),
+            );
+            _loadHiddenAccessPreference(); // Reload preference after returning from settings
+          },
+        ),
+      ],
+      backgroundColor:
+          theme.appBarTheme.backgroundColor ?? theme.colorScheme.surface,
+      elevation: theme.appBarTheme.elevation ?? 0,
+      foregroundColor:
+          theme.appBarTheme.foregroundColor ?? theme.colorScheme.onSurface,
+    );
+
+    switch (_selectedMethod) {
+      case HiddenAccessTriggerMethod.longPressAppBar:
+        return GestureDetector(
+          onLongPress: _isGestureAccessActive
+              ? null
+              : _triggerHiddenScreenAccess,
+          child: appBarWidget,
+        );
+      case HiddenAccessTriggerMethod.tripleTapAppBar:
+        return GestureDetector(
+          onTap: _isGestureAccessActive ? null : _handleTripleTap,
+          child: appBarWidget,
+        );
+      case HiddenAccessTriggerMethod.pinchInScreen:
+      case HiddenAccessTriggerMethod.pinchOutScreen:
+      default:
+        return appBarWidget;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return GestureDetector(
-      onScaleStart: _handleScaleStart,
-      onScaleUpdate: _handleScaleUpdate,
-      onScaleEnd: _handleScaleEnd,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(
-            'Echolog',
-            style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
-          ),
-          centerTitle: true,
-        ),
-        body: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: ValueListenableBuilder<Box<CustomCategory>>(
-            valueListenable: Hive.box<CustomCategory>(
-              customCategoriesBoxName,
-            ).listenable(),
-            builder: (context, customCategoryBox, _) {
-              final allDisplayCategories = _getAllCategories(customCategoryBox);
 
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  Center(
-                    child: Text(
-                      'How are you doing?',
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.poppins(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w600,
-                        color: theme.colorScheme.onBackground,
-                      ),
+    Widget mainContent = Scaffold(
+      appBar: PreferredSize(
+        // Added PreferredSize for AppBar
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: _buildAppBar(context), // Pass context
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: ValueListenableBuilder<Box<CustomCategory>>(
+          valueListenable: Hive.box<CustomCategory>(
+            customCategoriesBoxName,
+          ).listenable(),
+          builder: (context, customCategoryBox, _) {
+            final allDisplayCategories = _getAllCategories(customCategoryBox);
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Center(
+                  child: Text(
+                    'How are you doing?',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.poppins(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onBackground,
                     ),
                   ),
-                  const SizedBox(height: 25),
-                  CategorySelectorWidget(
-                    predefinedCategories: _predefinedCategories,
-                    selectedCategoryData: _selectedCategoryData,
+                ),
+                const SizedBox(height: 25),
+                CategorySelectorWidget(
+                  predefinedCategories: _predefinedCategories,
+                  selectedCategoryData: _selectedCategoryData,
+                  isRecording: _isRecording,
+                  onCategorySelected: _onCategorySelected,
+                ),
+                const SizedBox(height: 40),
+                Center(
+                  child: RecordingControlsWidget(
                     isRecording: _isRecording,
-                    onCategorySelected: _onCategorySelected,
+                    isRecordingPaused: _isRecordingPaused,
+                    recordingDuration: _recordingDuration,
+                    selectedCategoryData: _selectedCategoryData,
+                    isRecorderInitialized: _isRecorderInitialized,
+                    onStartStopRecording: _startOrStopRecording,
+                    onTogglePausePlayRecording: _togglePausePlayRecording,
+                    theme: theme,
                   ),
-                  const SizedBox(height: 40),
-                  Center(
-                    child: RecordingControlsWidget(
-                      isRecording: _isRecording,
-                      isRecordingPaused: _isRecordingPaused,
-                      recordingDuration: _recordingDuration,
-                      selectedCategoryData: _selectedCategoryData,
-                      isRecorderInitialized: _isRecorderInitialized,
-                      onStartStopRecording: _startOrStopRecording,
-                      onTogglePausePlayRecording: _togglePausePlayRecording,
-                      theme: theme,
-                    ),
-                  ),
-                  const SizedBox(height: 40),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Your Recordings',
-                          style: GoogleFonts.poppins(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w600,
-                            color: theme.colorScheme.onBackground,
-                          ),
+                ),
+                const SizedBox(height: 40),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Your Recordings',
+                        style: GoogleFonts.poppins(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.onBackground,
                         ),
-                        IconButton(
-                          icon: Icon(
-                            _currentFilters.isAnyFilterActive
-                                ? Icons.filter_alt_rounded
-                                : Icons.filter_alt_off_outlined,
-                            color: _currentFilters.isAnyFilterActive
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.onBackground.withOpacity(
-                                    0.7,
-                                  ),
-                          ),
-                          tooltip: 'Filter Recordings',
-                          onPressed: () =>
-                              _showAdvancedFilterSheet(allDisplayCategories),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          _currentFilters.isAnyFilterActive
+                              ? Icons.filter_alt_rounded
+                              : Icons.filter_alt_off_outlined,
+                          color: _currentFilters.isAnyFilterActive
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.onBackground.withOpacity(0.7),
                         ),
-                      ],
-                    ),
+                        tooltip: 'Filter Recordings',
+                        onPressed: () =>
+                            _showAdvancedFilterSheet(allDisplayCategories),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 15),
-                  Expanded(
-                    child: RecordingsListView(
-                      // <-- USING THE NEW WIDGET
-                      recordingsBoxListenable: Hive.box<RecordingEntry>(
-                        recordingsBoxName,
-                      ).listenable(),
-                      currentFilters: _currentFilters,
-                      onTogglePlay: _togglePlayRecordingItem,
-                      onDismissRecording: _handleDismissRecording,
-                      currentlyPlayingFileId: _currentlyPlayingFileId,
-                    ),
-                  ), // Closes Expanded
-                ], // Closes children list of Column
-              ); // Closes Column
-            }, // Closes builder of ValueListenableBuilder
-          ), // Closes ValueListenableBuilder
-        ), // Closes Padding (body of Scaffold)
-      ), // Closes Scaffold
-    ); // Closes GestureDetector (root of build method)
-  } // Closes build method
-} // Closes _HomeScreenState class
+                ),
+                const SizedBox(height: 15),
+                Expanded(
+                  child: RecordingsListView(
+                    recordingsBoxListenable: Hive.box<RecordingEntry>(
+                      recordingsBoxName,
+                    ).listenable(),
+                    currentFilters: _currentFilters,
+                    onTogglePlay: _togglePlayRecordingItem,
+                    onDismissRecording: _handleDismissRecording,
+                    currentlyPlayingFileId: _currentlyPlayingFileId,
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+
+    if (_selectedMethod == HiddenAccessTriggerMethod.pinchInScreen ||
+        _selectedMethod == HiddenAccessTriggerMethod.pinchOutScreen) {
+      return GestureDetector(
+        onScaleStart: _isGestureAccessActive ? null : _handleScreenScaleStart,
+        onScaleUpdate: _isGestureAccessActive ? null : _handleScreenScaleUpdate,
+        onScaleEnd: _isGestureAccessActive ? null : _handleScreenScaleEnd,
+        behavior: HitTestBehavior.opaque,
+        child: mainContent,
+      );
+    } else {
+      return mainContent;
+    }
+  }
+}

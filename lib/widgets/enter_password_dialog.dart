@@ -70,7 +70,7 @@ class _EnterPasswordDialogState extends State<EnterPasswordDialog> {
 
     if (isCorrect) {
       // Pop dialog BEFORE calling the callback
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(true);
       widget.onPasswordEntered(true);
     } else {
       setState(() {
