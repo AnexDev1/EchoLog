@@ -27,8 +27,7 @@ class CategorySelectorWidget extends StatefulWidget {
 
 class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
     with SingleTickerProviderStateMixin {
-  String?
-  _editingCategoryId; // ID of the category currently being edited/shaken
+  String? _editingCategoryId;
   late AnimationController _animationController;
   late Animation<double> _shakeAnimation;
 
@@ -56,10 +55,9 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
   }
 
   void _startEditMode(String categoryId) {
-    if (widget.isRecording) return; // Don't allow editing while recording
+    if (widget.isRecording) return;
     setState(() {
       if (_editingCategoryId == categoryId) {
-        // If already editing this one, toggle off
         _editingCategoryId = null;
         _animationController.stop();
         _animationController.reset();
@@ -87,15 +85,14 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
     final box = Hive.box<CustomCategory>(customCategoriesBoxName);
     box.delete(categoryId);
 
-    // If the deleted category was the currently selected one, clear the selection
     if (widget.selectedCategoryData?['id'] == categoryId) {
-      widget.onCategorySelected(null); // Pass null to clear selection
+      widget.onCategorySelected(null);
     }
-    _stopEditMode(); // Also stops animation and hides delete icon
+    _stopEditMode();
   }
 
   void _showAddCategoryDialog(BuildContext context) {
-    _stopEditMode(); // Stop any editing before showing dialog
+    _stopEditMode();
     showDialog(
       context: context,
       builder: (_) => const AddCategoryDialog(),
@@ -104,6 +101,13 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
         widget.onCategorySelected(newCategory.toMap());
       }
     });
+  }
+
+  Color _getContrastingTextColor(Color backgroundColor) {
+    return ThemeData.estimateBrightnessForColor(backgroundColor) ==
+            Brightness.dark
+        ? Colors.white.withOpacity(0.9)
+        : Colors.black.withOpacity(0.8);
   }
 
   @override
@@ -118,7 +122,6 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
         final customCategories = customCategoryBox.values
             .map((c) => c.toMap())
             .toList();
-        // Ensure predefined categories have 'isCustom': false and a unique 'id' (can be name)
         final mappedPredefined = widget.predefinedCategories
             .map((c) => {...c, 'id': c['name'] as String, 'isCustom': false})
             .toList();
@@ -126,9 +129,7 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
 
         List<Widget> categoryWidgets = allCategories.map((category) {
           final String categoryId = category['id'] as String;
-          final bool isCustom =
-              category['isCustom'] as bool? ??
-              false; // Default to false if null
+          final bool isCustom = category['isCustom'] as bool? ?? false;
 
           final String? selectedIdentifier =
               widget.selectedCategoryData?['id']?.toString() ??
@@ -136,36 +137,89 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
           final bool isSelected = selectedIdentifier == categoryId;
           final bool isEditingThis = _editingCategoryId == categoryId;
 
-          final String emoji = category['emoji'] as String? ?? '';
-          final Color itemColor = category['color'] as Color;
+          final String emoji = category['emoji'] as String? ?? '❓';
+          final Color categorySpecificBackgroundColor =
+              category['color'] as Color;
+          final Color? categorySpecificIconColor =
+              category['iconColor'] as Color?;
+
+          // Content color is based on category's iconColor if provided,
+          // otherwise, it's a contrasting color to the category's background.
+          // If selected, iconColor takes precedence.
+          Color currentContentColor;
+          if (isSelected && categorySpecificIconColor != null) {
+            currentContentColor = categorySpecificIconColor;
+          } else if (categorySpecificIconColor != null) {
+            // For unselected, if iconColor is defined, use it but maybe slightly less prominent
+            // or just use it as is if that's the design. For now, let's use it as is.
+            currentContentColor = categorySpecificIconColor;
+          } else {
+            currentContentColor = _getContrastingTextColor(
+              categorySpecificBackgroundColor,
+            );
+          }
+
+          Border? currentBorder;
+          List<BoxShadow>? currentBoxShadow;
+
+          if (isSelected) {
+            currentBorder = Border.all(
+              color: theme.colorScheme.primary,
+              width: 2.8,
+            ); // Prominent border for selected
+            currentBoxShadow = [
+              BoxShadow(
+                color: theme.shadowColor.withOpacity(
+                  0.25,
+                ), // Slightly stronger shadow for selected
+                spreadRadius: 1,
+                blurRadius: 6,
+                offset: const Offset(0, 3),
+              ),
+            ];
+          } else {
+            // Unselected items still show their color, but with a less prominent border/shadow
+            currentBorder = Border.all(
+              color: theme.dividerColor.withOpacity(
+                0.3,
+              ), // Very subtle border or Colors.transparent
+              width: 1.0,
+            );
+            currentBoxShadow = [
+              BoxShadow(
+                color: theme.shadowColor.withOpacity(0.1), // Subtle shadow
+                spreadRadius: 0,
+                blurRadius: 3,
+                offset: const Offset(0, 1),
+              ),
+            ];
+          }
 
           Widget chipContent = Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
             decoration: BoxDecoration(
-              color: isSelected ? itemColor : itemColor.withOpacity(0.7),
+              color:
+                  categorySpecificBackgroundColor, // ALWAYS use category's specific color
               borderRadius: BorderRadius.circular(25),
-              border: isSelected
-                  ? Border.all(color: theme.colorScheme.secondary, width: 2.5)
-                  : null,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.3),
-                  spreadRadius: 1,
-                  blurRadius: 5,
-                  offset: const Offset(0, 3),
-                ),
-              ],
+              border: currentBorder,
+              boxShadow: currentBoxShadow,
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(emoji, style: GoogleFonts.poppins(fontSize: 16)),
+                Text(
+                  emoji,
+                  style: GoogleFonts.poppins(
+                    fontSize: 16,
+                    color: currentContentColor,
+                  ),
+                ),
                 const SizedBox(width: 8),
                 Text(
                   category['name'] as String,
                   textAlign: TextAlign.center,
                   style: GoogleFonts.poppins(
-                    color: Colors.white,
+                    color: currentContentColor,
                     fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
                     fontSize: 15,
                   ),
@@ -179,9 +233,7 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
               animation: _shakeAnimation,
               builder: (context, child) {
                 return Transform.rotate(
-                  angle:
-                      _shakeAnimation.value *
-                      (math.pi / 180), // Convert degrees to radians
+                  angle: _shakeAnimation.value * (math.pi / 180),
                   child: child,
                 );
               },
@@ -196,10 +248,8 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
             onTap: () {
               if (widget.isRecording) return;
               if (isEditingThis) {
-                // If tapping the item that's being edited
                 _stopEditMode();
               } else {
-                // Normal selection or stop editing if another item was being edited
                 _stopEditMode();
                 widget.onCategorySelected(category);
               }
@@ -209,8 +259,7 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
                   ? 0.5
                   : 1.0,
               child: Stack(
-                clipBehavior:
-                    Clip.none, // Allow delete icon to overflow slightly
+                clipBehavior: Clip.none,
                 children: [
                   chipContent,
                   if (isEditingThis && isCustom)
@@ -218,7 +267,6 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
                       top: -8,
                       right: -8,
                       child: Material(
-                        // Material for InkWell ripple
                         color: Colors.transparent,
                         shape: const CircleBorder(),
                         child: InkWell(
@@ -227,13 +275,11 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
                           child: Container(
                             padding: const EdgeInsets.all(4),
                             decoration: BoxDecoration(
-                              color: theme
-                                  .colorScheme
-                                  .errorContainer, // Or Colors.red
+                              color: theme.colorScheme.errorContainer,
                               shape: BoxShape.circle,
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withOpacity(0.3),
+                                  color: theme.shadowColor.withOpacity(0.2),
                                   blurRadius: 3,
                                   offset: const Offset(0, 1),
                                 ),
@@ -242,9 +288,7 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
                             child: Icon(
                               Icons.close_rounded,
                               size: 16,
-                              color: theme
-                                  .colorScheme
-                                  .onErrorContainer, // Or Colors.white
+                              color: theme.colorScheme.onErrorContainer,
                             ),
                           ),
                         ),
@@ -256,7 +300,7 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
           );
         }).toList();
 
-        // "Add New" button
+        // "Add New" button - This should still use theme colors to differentiate
         categoryWidgets.add(
           GestureDetector(
             onTap: widget.isRecording
@@ -270,12 +314,22 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
                   vertical: 10,
                 ),
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.surface,
+                  color: theme.colorScheme.surfaceVariant.withOpacity(
+                    0.8,
+                  ), // THEMED
                   borderRadius: BorderRadius.circular(25),
                   border: Border.all(
-                    color: theme.colorScheme.primary.withOpacity(0.8),
+                    color: theme.colorScheme.primary.withOpacity(0.7), // THEMED
                     width: 1.5,
                   ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: theme.shadowColor.withOpacity(0.05),
+                      spreadRadius: 0,
+                      blurRadius: 2,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -283,13 +337,13 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
                     Icon(
                       Icons.add_circle_outline_rounded,
                       size: 18,
-                      color: theme.colorScheme.primary,
+                      color: theme.colorScheme.primary, // THEMED
                     ),
                     const SizedBox(width: 8),
                     Text(
                       'Add New',
                       style: GoogleFonts.poppins(
-                        color: theme.colorScheme.primary,
+                        color: theme.colorScheme.primary, // THEMED
                         fontWeight: FontWeight.w500,
                         fontSize: 15,
                       ),
@@ -302,15 +356,13 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
         );
 
         return GestureDetector(
-          // GestureDetector on the whole Wrap area to stop editing
-          onTap: _stopEditMode, // Tapping empty space in the Wrap stops editing
+          onTap: _stopEditMode,
           child: Container(
-            // Ensure it has a background to be tappable if Wrap is empty
-            color: Colors
-                .transparent, // Or theme.scaffoldBackgroundColor if needed for hit testing
+            color: Colors.transparent,
+            padding: const EdgeInsets.symmetric(vertical: 8.0),
             child: Wrap(
-              spacing: 12.0,
-              runSpacing: 12.0,
+              spacing: 10.0,
+              runSpacing: 10.0,
               alignment: WrapAlignment.center,
               children: categoryWidgets,
             ),

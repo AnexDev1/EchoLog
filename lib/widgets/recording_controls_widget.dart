@@ -10,7 +10,6 @@ class RecordingControlsWidget extends StatelessWidget {
   final bool isRecorderInitialized;
   final VoidCallback onStartStopRecording;
   final VoidCallback onTogglePausePlayRecording;
-  final ThemeData theme;
 
   // Sizing constants
   static const double _buttonCircularDiameter = 80.0;
@@ -26,13 +25,12 @@ class RecordingControlsWidget extends StatelessWidget {
     required this.isRecorderInitialized,
     required this.onStartStopRecording,
     required this.onTogglePausePlayRecording,
-    required this.theme,
   });
 
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
     bool categorySelected = selectedCategoryData != null;
-    // bool isActiveCircular = categorySelected && isRecorderInitialized && !isRecording; // Not directly used for targetBackgroundColor anymore
 
     double targetWidth = _buttonCircularDiameter;
     double targetHeight = _buttonCircularDiameter;
@@ -40,41 +38,29 @@ class RecordingControlsWidget extends StatelessWidget {
       _buttonCircularDiameter / 2,
     );
 
-    Color targetBackgroundColor; // Will be set below
+    Color targetBackgroundColor;
+    List<BoxShadow> targetBoxShadow;
 
-    List<BoxShadow> targetBoxShadow = [
-      BoxShadow(
-        color: Colors.black.withOpacity(
-          (categorySelected && isRecorderInitialized && !isRecording) ||
-                  isRecording
-              ? 0.35
-              : 0.25,
-        ),
-        blurRadius:
-            (categorySelected && isRecorderInitialized && !isRecording) ||
-                isRecording
-            ? 6
-            : 4,
-        spreadRadius:
-            (categorySelected && isRecorderInitialized && !isRecording) ||
-                isRecording
-            ? 1
-            : 0,
-        offset: const Offset(0, 2),
-      ),
-    ];
+    bool isActiveState =
+        (categorySelected && isRecorderInitialized && !isRecording) ||
+        isRecording;
 
     if (isRecording) {
-      targetWidth =
-          MediaQuery.of(context).size.width * 0.5; // FURTHER REDUCED WIDTH
+      targetWidth = MediaQuery.of(context).size.width * 0.5;
       targetHeight = 65.0;
       targetBorderRadius = BorderRadius.circular(35.0);
-      targetBackgroundColor = theme.colorScheme.surface.withOpacity(
-        0.95,
-      ); // Recording bar color
+
+      if (theme.brightness == Brightness.light) {
+        // THEMED: Use a more distinct background for the recording bar in light theme
+        targetBackgroundColor = theme.colorScheme.surfaceContainerHigh;
+      } else {
+        // For dark theme, the original surface color with opacity works well
+        targetBackgroundColor = theme.colorScheme.surface.withOpacity(0.95);
+      }
+
       targetBoxShadow = [
         BoxShadow(
-          color: Colors.black.withOpacity(0.5),
+          color: theme.shadowColor.withOpacity(0.35),
           blurRadius: 8,
           spreadRadius: 1,
           offset: const Offset(0, 3),
@@ -83,12 +69,18 @@ class RecordingControlsWidget extends StatelessWidget {
     } else {
       // Circular state
       if (categorySelected && isRecorderInitialized) {
-        targetBackgroundColor =
-            theme.colorScheme.secondary; // Active circular is light blue/teal
+        targetBackgroundColor = theme.colorScheme.secondary;
       } else {
-        targetBackgroundColor =
-            Colors.grey.shade700; // Disabled circular is grey
+        targetBackgroundColor = theme.colorScheme.surfaceVariant;
       }
+      targetBoxShadow = [
+        BoxShadow(
+          color: theme.shadowColor.withOpacity(isActiveState ? 0.25 : 0.15),
+          blurRadius: isActiveState ? 6 : 4,
+          spreadRadius: isActiveState ? 1 : 0,
+          offset: const Offset(0, 2),
+        ),
+      ];
     }
 
     bool canInteractOverall =
@@ -125,20 +117,24 @@ class RecordingControlsWidget extends StatelessWidget {
           boxShadow: targetBoxShadow,
         ),
         child: isRecording
-            ? _buildRecordingBarContent(context)
+            ? _buildRecordingBarContent(context, theme, targetBackgroundColor)
             : _buildCircularButtonContent(
+                theme: theme,
                 isActive: categorySelected && isRecorderInitialized,
               ),
       ),
     );
   }
 
-  Widget _buildCircularButtonContent({required bool isActive}) {
+  Widget _buildCircularButtonContent({
+    required ThemeData theme,
+    required bool isActive,
+  }) {
     Color currentIconColor;
     if (isActive) {
       currentIconColor = theme.colorScheme.onSecondary;
     } else {
-      currentIconColor = Colors.grey.shade400;
+      currentIconColor = theme.colorScheme.onSurfaceVariant.withOpacity(0.6);
     }
 
     return Center(
@@ -146,9 +142,24 @@ class RecordingControlsWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildRecordingBarContent(BuildContext context) {
+  Widget _buildRecordingBarContent(
+    BuildContext context,
+    ThemeData theme,
+    Color targetBackgroundColor,
+  ) {
     Color iconColorOnBar =
-        selectedCategoryData?['iconColor'] as Color? ?? Colors.white;
+        selectedCategoryData?['iconColor'] as Color? ??
+        theme.colorScheme.primary;
+    // Text color on the recording bar should contrast with its background
+    // If bar is surfaceContainerHigh (light theme) or surface (dark theme), onSurface should work.
+    Color durationTextColor = theme.colorScheme.onSurface;
+    if (theme.brightness == Brightness.light &&
+        targetBackgroundColor == theme.colorScheme.surfaceContainerHigh) {
+      // Ensure text contrasts with surfaceContainerHigh. onSurface should be fine.
+      // If surfaceContainerHigh was very dark, we might need theme.colorScheme.onSurfaceVariant or similar.
+      // But typically onSurface is designed to work on these container colors.
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12.0),
       child: Row(
@@ -160,11 +171,11 @@ class RecordingControlsWidget extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.all(10.0),
               decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.85),
+                color: theme.colorScheme.error,
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.3),
+                    color: theme.shadowColor.withOpacity(0.25),
                     blurRadius: 3,
                     offset: const Offset(0, 1),
                   ),
@@ -174,7 +185,7 @@ class RecordingControlsWidget extends StatelessWidget {
                 width: 16,
                 height: 16,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: theme.colorScheme.onError,
                   borderRadius: BorderRadius.circular(3),
                 ),
               ),
@@ -185,7 +196,7 @@ class RecordingControlsWidget extends StatelessWidget {
               child: Text(
                 formatDuration(recordingDuration),
                 style: GoogleFonts.poppins(
-                  color: Colors.white,
+                  color: durationTextColor, // Using determined text color
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.5,
@@ -203,6 +214,7 @@ class RecordingControlsWidget extends StatelessWidget {
             ),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
+            tooltip: isRecordingPaused ? 'Resume' : 'Pause',
             onPressed: onTogglePausePlayRecording,
           ),
         ],

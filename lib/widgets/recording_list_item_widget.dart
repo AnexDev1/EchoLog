@@ -7,101 +7,190 @@ import '../utils/duration_formatter.dart';
 class RecordingListItemWidget extends StatelessWidget {
   final RecordingEntry entry;
   final Function(RecordingEntry) onPlayPause;
-  final ThemeData theme;
+  final Function(RecordingEntry) onMoveToVault;
+  final Function(RecordingEntry) onShare; // NEW: Callback for sharing
 
   const RecordingListItemWidget({
     super.key,
     required this.entry,
     required this.onPlayPause,
-    required this.theme,
+    required this.onMoveToVault,
+    required this.onShare, // NEW
   });
+
+  void _showMoveToVaultDialog(BuildContext context, RecordingEntry itemToMove) {
+    final theme = Theme.of(context);
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor:
+              theme.dialogTheme.backgroundColor ?? theme.colorScheme.surface,
+          shape:
+              theme.dialogTheme.shape ??
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
+          title: Text(
+            'Move to Vault?',
+            style:
+                theme.dialogTheme.titleTextStyle ??
+                GoogleFonts.poppins(
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface,
+                ),
+          ),
+          content: Text(
+            'Are you sure you want to move "${itemToMove.displayName}" to the secret vault? It will be hidden from this list.',
+            style:
+                theme.dialogTheme.contentTextStyle ??
+                GoogleFonts.poppins(
+                  color: theme.colorScheme.onSurface.withOpacity(0.8),
+                ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              style: theme.textButtonTheme.style,
+              child: const Text('Cancel'),
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+            ),
+            TextButton(
+              style: theme.textButtonTheme.style?.copyWith(
+                foregroundColor: MaterialStateProperty.all(
+                  theme.colorScheme.primary,
+                ),
+              ),
+              child: const Text('Move to Vault'),
+              onPressed: () {
+                onMoveToVault(itemToMove);
+                Navigator.of(dialogContext).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
-      color: theme.colorScheme.surface.withAlpha(
-        230,
-      ), // Or theme.colorScheme.surfaceVariant
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20.0),
-        side: BorderSide(
-          color: entry.moodColor.withOpacity(0.7),
-          width: 1.5,
-        ), // Mood color border
-      ),
-      elevation: 2.5,
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16.0,
-          vertical: 10.0,
-        ),
-        leading: Icon(
-          Icons.graphic_eq_rounded,
-          color: entry.moodIconColor.withOpacity(0.9), // Using moodIconColor
-          size: 28,
-        ),
-        title: Text(
-          entry.displayName,
-          style: GoogleFonts.poppins(
-            fontWeight: FontWeight.w500,
-            color: theme.colorScheme.onSurface,
-            fontSize: 16,
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '${formatDuration(entry.duration)} • ${DateFormat('MMM d, yyyy').format(entry.dateRecorded)}',
-              style: GoogleFonts.poppins(
-                color: theme.colorScheme.onSurface.withOpacity(0.65),
-                fontSize: 12.5,
-              ),
+    final ThemeData theme = Theme.of(context);
+
+    final Color moodTagTextColor =
+        ThemeData.estimateBrightnessForColor(entry.moodColor) == Brightness.dark
+        ? Colors.white.withOpacity(0.9)
+        : entry.moodColor;
+
+    return GestureDetector(
+      onLongPress: () {
+        // Only allow moving to vault if not currently playing to avoid file access issues
+        if (!entry.isPlaying) {
+          _showMoveToVaultDialog(context, entry);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Stop playback before moving to vault.'),
             ),
-            const SizedBox(height: 5.0), // Spacing
-            Container(
-              // This container acts as the "mood tag"
-              padding: const EdgeInsets.symmetric(
-                horizontal: 8.0,
-                vertical: 3.0,
-              ),
-              decoration: BoxDecoration(
-                color: entry.moodColor.withOpacity(
-                  0.15,
-                ), // Subtle background from mood color
-                borderRadius: BorderRadius.circular(
-                  6.0,
-                ), // Rounded corners for the tag
-              ),
-              child: Text(
-                entry.moodName,
+          );
+        }
+      },
+      child: Card(
+        margin: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
+        color: theme.cardTheme.color ?? theme.colorScheme.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16.0),
+          side: BorderSide(color: entry.moodColor.withOpacity(0.6), width: 1.5),
+        ),
+        elevation: theme.cardTheme.elevation ?? 2.0,
+        child: ListTile(
+          contentPadding: const EdgeInsets.only(
+            left: 16.0,
+            right: 4.0,
+            top: 10.0,
+            bottom: 10.0,
+          ), // Adjusted right padding
+          leading: Icon(
+            Icons.graphic_eq_rounded,
+            color: entry.moodIconColor.withOpacity(0.9),
+            size: 28,
+          ),
+          title: Text(
+            entry.displayName,
+            style: GoogleFonts.poppins(
+              fontWeight: FontWeight.w500,
+              color: theme.colorScheme.onSurface,
+              fontSize: 16,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 2),
+              Text(
+                '${formatDuration(entry.duration)} • ${DateFormat('MMM d, yyyy').format(entry.dateRecorded)}',
                 style: GoogleFonts.poppins(
-                  color: entry.moodColor.withOpacity(
-                    0.95,
-                  ), // Stronger mood color for text
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w500,
+                  color: theme.colorScheme.onSurface.withOpacity(0.7),
+                  fontSize: 12.5,
                 ),
               ),
-            ),
-          ],
-        ),
-        trailing: IconButton(
-          icon: Icon(
-            entry.isPlaying
-                ? Icons.pause_circle_filled_rounded
-                : Icons.play_circle_fill_rounded,
-            color: Colors.white,
-            size: 32,
+              const SizedBox(height: 6.0),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8.0,
+                  vertical: 4.0,
+                ),
+                decoration: BoxDecoration(
+                  color: entry.moodColor.withOpacity(
+                    theme.brightness == Brightness.dark ? 0.25 : 0.15,
+                  ),
+                  borderRadius: BorderRadius.circular(8.0),
+                ),
+                child: Text(
+                  entry.moodName,
+                  style: GoogleFonts.poppins(
+                    color: moodTagTextColor,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
           ),
-          splashRadius: 24.0,
-          onPressed: () => onPlayPause(entry),
+          trailing: Row(
+            // NEW: Use Row for multiple trailing icons
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              IconButton(
+                icon: Icon(
+                  Icons.share_outlined, // Share Icon
+                  color: theme.colorScheme.onSurface.withOpacity(
+                    0.7,
+                  ), // Themed color
+                  size: 26,
+                ),
+                tooltip: 'Share Recording',
+                splashRadius: 22.0,
+                onPressed: () => onShare(entry), // Call new callback
+              ),
+              IconButton(
+                icon: Icon(
+                  entry.isPlaying
+                      ? Icons.pause_circle_filled_rounded
+                      : Icons.play_circle_fill_rounded,
+                  color: theme.colorScheme.primary,
+                  size: 34,
+                ),
+                splashRadius: 26.0,
+                tooltip: entry.isPlaying ? 'Pause' : 'Play',
+                onPressed: () => onPlayPause(entry),
+              ),
+            ],
+          ),
+          onTap: () => onPlayPause(entry),
         ),
-        onTap: () => onPlayPause(entry),
       ),
     );
   }

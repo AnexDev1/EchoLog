@@ -7,6 +7,7 @@ import 'package:flutter_sound/flutter_sound.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart'; // Added for preferences
 
 import 'models/recording_entry.dart';
@@ -113,6 +114,148 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _initializeRecorder();
     _initializePlayer();
     _loadHiddenAccessPreference(); // Load hidden access method preference
+  }
+
+  Future<void> _shareRecording(RecordingEntry entry) async {
+    if (entry.filePath.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Error: Recording file path is missing.')),
+      );
+      return;
+    }
+
+    // Optional: Check if the file exists before attempting to share
+    final file = File(entry.filePath);
+    if (!await file.exists()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Error: Recording file not found. It might have been moved or deleted.',
+          ),
+        ),
+      );
+      return;
+    }
+    // Stop playback if this entry is playing, as sharing might lock the file
+    if (_player != null &&
+        _isPlayerInitialized &&
+        _currentlyPlayingFileId == entry.id &&
+        _player!.isPlaying) {
+      await _player!.stopPlayer();
+      setState(() {
+        _currentlyPlayingFileId = null;
+        // Update the entry in the list to reflect it's not playing
+        final box = Hive.box<RecordingEntry>(recordingsBoxName);
+        Hive.box<RecordingEntry>(recordingsBoxName);
+        final entries = box.values.toList();
+        final entryIndex = entries.indexWhere((e) => e.id == entry.id);
+        if (entryIndex != -1) {
+          entries[entryIndex].isPlaying = false;
+          box.put(entry.id, entries[entryIndex]); // Update the box
+        }
+      });
+    }
+
+    try {
+      final xFile = XFile(entry.filePath);
+      await Share.shareXFiles(
+        [xFile],
+        text: 'Check out my Echolog recording: ${entry.displayName}',
+        subject:
+            'Echolog Recording: ${entry.displayName}', // Subject for email apps
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not share recording: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _moveToVault(RecordingEntry entryToMove) async {
+    if (entryToMove.id.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Error: Recording has no ID and cannot be moved.'),
+        ),
+      );
+      return;
+    }
+
+    final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
+    final hiddenRecordingsBox = Hive.box<RecordingEntry>(
+      hiddenRecordingsBoxName,
+    );
+
+    if (hiddenRecordingsBox.containsKey(entryToMove.id)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '"${entryToMove.displayName}" is already in the vault.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    // Stop playback if this entry is playing
+    if (_currentlyPlayingFileId == entryToMove.id &&
+        _player != null &&
+        _player!.isPlaying) {
+      // Assuming _player is your audio player instance
+      await _player!.stopPlayer();
+      setState(() {
+        _currentlyPlayingFileId = null;
+        // If _isRecordingPausedForPlayback was a relevant flag, ensure it's handled or removed if not used.
+        // For now, focusing on the direct error.
+        // The entry will be removed from the list, so no need to update its isPlaying status here
+      });
+    }
+
+    // Create a NEW RecordingEntry instance for the hidden box
+    // This assumes your RecordingEntry has a constructor that takes all its properties.
+    // Adjust the constructor call according to your RecordingEntry model.
+    final RecordingEntry entryForVault = RecordingEntry(
+      id: entryToMove.id,
+      filePath: entryToMove.filePath,
+      displayName: entryToMove.displayName,
+      durationMillis: entryToMove.duration.inMilliseconds,
+      dateRecorded: entryToMove.dateRecorded,
+      moodName: entryToMove.moodName,
+      moodColorValue: entryToMove.moodColor.value,
+      emoji: entryToMove.emoji,
+      moodIconColorValue: entryToMove.moodIconColor.value,
+      // isPlaying: false, // When moving, it's likely not playing in the new context
+      // Add any other fields your RecordingEntry has
+    );
+    // Ensure the isPlaying status is false for the new entry in the vault,
+    // as playback was stopped.
+    entryForVault.isPlaying = false;
+
+    try {
+      // Add the new instance to hidden box
+      await hiddenRecordingsBox.put(entryForVault.id, entryForVault);
+      // Remove from public box using the original entry's key (ID)
+      await recordingsBox.delete(entryToMove.id);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Moved "${entryToMove.displayName}" to vault.'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error moving to vault: $e')));
+      }
+      // If adding to hidden box failed, you might want to avoid deleting from the original box,
+      // or implement more sophisticated rollback logic. For now, we proceed with deletion
+      // if put succeeded.
+    }
   }
 
   Future<void> _initializeRecorder() async {
@@ -772,7 +915,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     isRecorderInitialized: _isRecorderInitialized,
                     onStartStopRecording: _startOrStopRecording,
                     onTogglePausePlayRecording: _togglePausePlayRecording,
-                    theme: theme,
                   ),
                 ),
                 const SizedBox(height: 40),
@@ -808,6 +950,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 const SizedBox(height: 15),
                 Expanded(
                   child: RecordingsListView(
+                    onShare: _shareRecording,
+                    onMoveToVault: _moveToVault,
                     recordingsBoxListenable: Hive.box<RecordingEntry>(
                       recordingsBoxName,
                     ).listenable(),

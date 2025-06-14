@@ -634,14 +634,40 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 4.0),
                           child: RecordingListItemWidget(
+                            onShare: (selectedEntry) {
+                              // Handle share action if needed
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Sharing "${selectedEntry.displayName}" is not supported in hidden recordings.',
+                                  ),
+                                ),
+                              );
+                            },
                             entry: entry,
                             onPlayPause: (selectedEntry) =>
                                 _togglePlayRecordingItem(
                                   selectedEntry,
                                   recordings,
                                 ),
-                            theme: theme,
-                            // isDense: true,
+                            onMoveToVault: (entry) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    '"${entry.displayName}" is already in the vault.',
+                                  ),
+                                ),
+                              );
+                              print(
+                                "Attempted to move an already hidden item to vault: ${entry.displayName}",
+                              );
+                              // Optionally, show a snackbar:
+                              // showCustomSnackBar(
+                              //   context: context,
+                              //   message: '"${entry.displayName}" is already in the hidden vault.',
+                              // );
+                            },
+                            // isDense: true, // Uncomment if you need dense layout
                           ),
                         ),
                       );
