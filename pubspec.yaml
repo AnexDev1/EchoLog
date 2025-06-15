@@ -26,7 +26,7 @@ dependencies:
   flutter_launcher_icons: ^0.14.4
   http: ^1.4.0
   home_widget: ^0.8.0
-  just_audio: ^0.10.4
+
 
 dev_dependencies:
   flutter_test:

@@ -1,16 +1,21 @@
+import 'package:echolog/theme_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'dart:math' as math; // For PI
+import 'package:provider/provider.dart';
 
 import '../models/custom_category.dart';
 import '../main.dart'; // For customCategoriesBoxName
 import 'add_category_dialog.dart';
+import 'neumorphic_category_tag.dart';
+import 'glassmorphic_category_tag.dart';
+import 'original_category_tag.dart';
 
 class CategorySelectorWidget extends StatefulWidget {
   final List<Map<String, dynamic>> predefinedCategories;
   final Map<String, dynamic>? selectedCategoryData;
-  final Function(Map<String, dynamic>?) onCategorySelected; // Allow null
+  final Function(Map<String, dynamic>?) onCategorySelected;
   final bool isRecording;
 
   const CategorySelectorWidget({
@@ -38,14 +43,9 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
       duration: const Duration(milliseconds: 100),
       vsync: this,
     );
-    _shakeAnimation =
-        Tween<double>(begin: -1.5, end: 1.5) // Degrees to shake
-            .animate(
-              CurvedAnimation(
-                parent: _animationController,
-                curve: Curves.easeInOut,
-              ),
-            );
+    _shakeAnimation = Tween<double>(begin: -1.5, end: 1.5).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
+    );
   }
 
   @override
@@ -81,10 +81,8 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
   void _deleteCategory(Map<String, dynamic> category) {
     final categoryId = category['id'] as String?;
     if (categoryId == null) return;
-
     final box = Hive.box<CustomCategory>(customCategoriesBoxName);
     box.delete(categoryId);
-
     if (widget.selectedCategoryData?['id'] == categoryId) {
       widget.onCategorySelected(null);
     }
@@ -113,6 +111,13 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final currentTagStyle = themeProvider.categoryTagStyle;
+
+    final isDarkTheme = theme.brightness == Brightness.dark;
+    final Color neumorphicButtonSurfaceColor = isDarkTheme
+        ? Colors.grey.shade800
+        : Colors.grey.shade200;
 
     return ValueListenableBuilder<Box<CustomCategory>>(
       valueListenable: Hive.box<CustomCategory>(
@@ -130,227 +135,226 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
         List<Widget> categoryWidgets = allCategories.map((category) {
           final String categoryId = category['id'] as String;
           final bool isCustom = category['isCustom'] as bool? ?? false;
-
           final String? selectedIdentifier =
               widget.selectedCategoryData?['id']?.toString() ??
               widget.selectedCategoryData?['name'] as String?;
           final bool isSelected = selectedIdentifier == categoryId;
           final bool isEditingThis = _editingCategoryId == categoryId;
+          final String emojiString = category['emoji'] as String? ?? '❓';
+          final String categoryName = category['name'] as String;
+          final Color categoryMainColor = category['color'] as Color;
 
-          final String emoji = category['emoji'] as String? ?? '❓';
-          final Color categorySpecificBackgroundColor =
-              category['color'] as Color;
-          final Color? categorySpecificIconColor =
-              category['iconColor'] as Color?;
+          Widget tagContentWidget;
 
-          // Content color is based on category's iconColor if provided,
-          // otherwise, it's a contrasting color to the category's background.
-          // If selected, iconColor takes precedence.
-          Color currentContentColor;
-          if (isSelected && categorySpecificIconColor != null) {
-            currentContentColor = categorySpecificIconColor;
-          } else if (categorySpecificIconColor != null) {
-            // For unselected, if iconColor is defined, use it but maybe slightly less prominent
-            // or just use it as is if that's the design. For now, let's use it as is.
-            currentContentColor = categorySpecificIconColor;
-          } else {
-            currentContentColor = _getContrastingTextColor(
-              categorySpecificBackgroundColor,
-            );
-          }
-
-          Border? currentBorder;
-          List<BoxShadow>? currentBoxShadow;
-
-          if (isSelected) {
-            currentBorder = Border.all(
-              color: theme.colorScheme.primary,
-              width: 2.8,
-            ); // Prominent border for selected
-            currentBoxShadow = [
-              BoxShadow(
-                color: theme.shadowColor.withOpacity(
-                  0.25,
-                ), // Slightly stronger shadow for selected
-                spreadRadius: 1,
-                blurRadius: 6,
-                offset: const Offset(0, 3),
-              ),
-            ];
-          } else {
-            // Unselected items still show their color, but with a less prominent border/shadow
-            currentBorder = Border.all(
-              color: theme.dividerColor.withOpacity(
-                0.3,
-              ), // Very subtle border or Colors.transparent
-              width: 1.0,
-            );
-            currentBoxShadow = [
-              BoxShadow(
-                color: theme.shadowColor.withOpacity(0.1), // Subtle shadow
-                spreadRadius: 0,
-                blurRadius: 3,
-                offset: const Offset(0, 1),
-              ),
-            ];
-          }
-
-          Widget chipContent = Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-            decoration: BoxDecoration(
-              color:
-                  categorySpecificBackgroundColor, // ALWAYS use category's specific color
-              borderRadius: BorderRadius.circular(25),
-              border: currentBorder,
-              boxShadow: currentBoxShadow,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  emoji,
-                  style: GoogleFonts.poppins(
-                    fontSize: 16,
-                    color: currentContentColor,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  category['name'] as String,
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.poppins(
-                    color: currentContentColor,
-                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                    fontSize: 15,
-                  ),
-                ),
-              ],
-            ),
-          );
-
-          if (isEditingThis && isCustom) {
-            chipContent = AnimatedBuilder(
-              animation: _shakeAnimation,
-              builder: (context, child) {
-                return Transform.rotate(
-                  angle: _shakeAnimation.value * (math.pi / 180),
-                  child: child,
-                );
+          if (currentTagStyle == CategoryTagStyle.neumorphic) {
+            tagContentWidget = NeumorphicCategoryTag(
+              key: ValueKey("neumorphic-tag-$categoryId"),
+              label: '$emojiString $categoryName',
+              onTap: () {
+                if (widget.isRecording) return;
+                if (isEditingThis)
+                  _stopEditMode();
+                else {
+                  _stopEditMode();
+                  widget.onCategorySelected(category);
+                }
               },
-              child: chipContent,
+              categoryColor: categoryMainColor,
+              surfaceColor: neumorphicButtonSurfaceColor,
+              isSelected: isSelected,
+            );
+          } else if (currentTagStyle == CategoryTagStyle.glassmorphic) {
+            tagContentWidget = GlassmorphicCategoryTag(
+              key: ValueKey("glassmorphic-tag-$categoryId"),
+              label: '$emojiString $categoryName',
+              onTap: () {
+                if (widget.isRecording) return;
+                if (isEditingThis)
+                  _stopEditMode();
+                else {
+                  _stopEditMode();
+                  widget.onCategorySelected(category);
+                }
+              },
+              isSelected: isSelected,
+              defaultTextColor: isDarkTheme
+                  ? Colors.white.withOpacity(0.85)
+                  : Colors.black.withOpacity(0.75),
+            );
+          } else {
+            // Original Style (CategoryTagStyle.original)
+            Color currentContentColor =
+                category['iconColor'] as Color? ??
+                _getContrastingTextColor(categoryMainColor);
+            tagContentWidget = OriginalCategoryTag(
+              key: ValueKey("original-tag-$categoryId"),
+              emoji: emojiString,
+              name: categoryName,
+              categoryColor: categoryMainColor,
+              contentColor: currentContentColor,
+              isSelected: isSelected,
+              onTap: () {
+                // Original tag now handles its own tap for selection
+                if (widget.isRecording) return;
+                if (isEditingThis)
+                  _stopEditMode(); // Still stop edit mode if active
+                else {
+                  _stopEditMode();
+                  widget.onCategorySelected(category);
+                }
+              },
             );
           }
 
-          return GestureDetector(
-            onLongPress: isCustom && !widget.isRecording
-                ? () => _startEditMode(categoryId)
-                : null,
-            onTap: () {
-              if (widget.isRecording) return;
-              if (isEditingThis) {
-                _stopEditMode();
-              } else {
-                _stopEditMode();
-                widget.onCategorySelected(category);
-              }
-            },
-            child: Opacity(
-              opacity: widget.isRecording && !isSelected && !isEditingThis
-                  ? 0.5
-                  : 1.0,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  chipContent,
-                  if (isEditingThis && isCustom)
-                    Positioned(
-                      top: -8,
-                      right: -8,
-                      child: Material(
-                        color: Colors.transparent,
-                        shape: const CircleBorder(),
-                        child: InkWell(
-                          onTap: () => _deleteCategory(category),
-                          customBorder: const CircleBorder(),
-                          child: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.errorContainer,
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: theme.shadowColor.withOpacity(0.2),
-                                  blurRadius: 3,
-                                  offset: const Offset(0, 1),
-                                ),
-                              ],
-                            ),
-                            child: Icon(
-                              Icons.close_rounded,
-                              size: 16,
-                              color: theme.colorScheme.onErrorContainer,
-                            ),
-                          ),
+          Widget finalTagStructure;
+          if (isEditingThis && isCustom) {
+            Widget animatedTag = AnimatedBuilder(
+              animation: _shakeAnimation,
+              builder: (BuildContext context, Widget? animChild) =>
+                  Transform.rotate(
+                    angle: _shakeAnimation.value * (math.pi / 180),
+                    child: animChild,
+                  ),
+              child: tagContentWidget,
+            );
+            finalTagStructure = Stack(
+              key: ValueKey("stack-$categoryId"),
+              clipBehavior: Clip.none,
+              alignment: Alignment.center,
+              children: [
+                animatedTag,
+                Positioned(
+                  top: -10,
+                  right: -10,
+                  child: Material(
+                    color: Colors.transparent,
+                    shape: const CircleBorder(),
+                    elevation: 2,
+                    child: InkWell(
+                      onTap: () => _deleteCategory(category),
+                      customBorder: const CircleBorder(),
+                      child: Container(
+                        padding: const EdgeInsets.all(5),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.errorContainer,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.close_rounded,
+                          size: 18,
+                          color: theme.colorScheme.onErrorContainer,
                         ),
                       ),
                     ),
-                ],
-              ),
+                  ),
+                ),
+              ],
+            );
+          } else {
+            finalTagStructure = tagContentWidget;
+          }
+
+          bool shouldDim =
+              widget.isRecording && !isSelected && !(isEditingThis && isCustom);
+
+          // The outer GestureDetector is now primarily for long-press and dimming.
+          // Tap handling for selection is moved into individual tag widgets.
+          return GestureDetector(
+            key: ValueKey("outer-gesture-$categoryId"),
+            onLongPress: isCustom && !widget.isRecording
+                ? () => _startEditMode(categoryId)
+                : null,
+            // onTap: outerTapCallback, // Tap is now handled by the specific tag widget
+            child: Opacity(
+              opacity: shouldDim ? 0.5 : 1.0,
+              child: finalTagStructure,
             ),
           );
         }).toList();
 
-        // "Add New" button - This should still use theme colors to differentiate
-        categoryWidgets.add(
-          GestureDetector(
+        Widget addNewButtonWidget;
+        if (currentTagStyle == CategoryTagStyle.neumorphic) {
+          addNewButtonWidget = NeumorphicCategoryTag(
+            label: '➕ Add New',
+            onTap: widget.isRecording
+                ? () {}
+                : () => _showAddCategoryDialog(context),
+            categoryColor: theme.colorScheme.primary,
+            surfaceColor: neumorphicButtonSurfaceColor,
+            isSelected: false,
+          );
+        } else if (currentTagStyle == CategoryTagStyle.glassmorphic) {
+          addNewButtonWidget = GlassmorphicCategoryTag(
+            label: '➕ Add New',
+            onTap: widget.isRecording
+                ? () {}
+                : () => _showAddCategoryDialog(context),
+            isSelected: false,
+            defaultTextColor: isDarkTheme
+                ? Colors.white.withOpacity(0.85)
+                : Colors.black.withOpacity(0.75),
+          );
+        } else {
+          // Original "Add New" button style
+          addNewButtonWidget = GestureDetector(
+            // This is the original "Add New" button
             onTap: widget.isRecording
                 ? null
                 : () => _showAddCategoryDialog(context),
-            child: Opacity(
-              opacity: widget.isRecording ? 0.5 : 1.0,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceVariant.withOpacity(0.8),
+                borderRadius: BorderRadius.circular(13),
+                border: Border.all(
+                  color: theme.colorScheme.primary.withOpacity(0.7),
+                  width: 1.5,
                 ),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceVariant.withOpacity(
-                    0.8,
-                  ), // THEMED
-                  borderRadius: BorderRadius.circular(25),
-                  border: Border.all(
-                    color: theme.colorScheme.primary.withOpacity(0.7), // THEMED
-                    width: 1.5,
+                boxShadow: [
+                  BoxShadow(
+                    color: theme.shadowColor.withOpacity(0.05),
+                    spreadRadius: 0,
+                    blurRadius: 2,
+                    offset: const Offset(0, 1),
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: theme.shadowColor.withOpacity(0.05),
-                      spreadRadius: 0,
-                      blurRadius: 2,
-                      offset: const Offset(0, 1),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.add_circle_outline_rounded,
-                      size: 18,
-                      color: theme.colorScheme.primary, // THEMED
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Add New',
-                      style: GoogleFonts.poppins(
-                        color: theme.colorScheme.primary, // THEMED
-                        fontWeight: FontWeight.w500,
-                        fontSize: 15,
-                      ),
-                    ),
-                  ],
-                ),
+                ],
               ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.add_circle_outline_rounded,
+                    size: 18,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Add New',
+                    style: GoogleFonts.poppins(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.w500,
+                      fontSize: 15,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        categoryWidgets.add(
+          GestureDetector(
+            key: const ValueKey("add-new-outer-gesture"),
+            behavior: HitTestBehavior.opaque,
+            onTap: addNewButtonWidget is GestureDetector
+                ? null
+                : (widget.isRecording
+                      ? null
+                      : () => _showAddCategoryDialog(context)),
+            child: Opacity(
+              key: const ValueKey("add-new-wrapper-opacity"),
+              opacity: widget.isRecording ? 0.5 : 1.0,
+              child: addNewButtonWidget,
             ),
           ),
         );
@@ -359,10 +363,13 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
           onTap: _stopEditMode,
           child: Container(
             color: Colors.transparent,
-            padding: const EdgeInsets.symmetric(vertical: 8.0),
+            padding: const EdgeInsets.symmetric(
+              vertical: 12.0,
+              horizontal: 8.0,
+            ),
             child: Wrap(
-              spacing: 10.0,
-              runSpacing: 10.0,
+              spacing: 12.0,
+              runSpacing: 12.0,
               alignment: WrapAlignment.center,
               children: categoryWidgets,
             ),

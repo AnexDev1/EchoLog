@@ -1,3 +1,4 @@
+// Ensure correct path
 import 'package:echolog/theme_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -12,8 +13,6 @@ enum HiddenAccessTriggerMethod {
   tripleTapAppBar,
   pinchInScreen,
   pinchOutScreen,
-  // If "Hold" is meant for the general screen, we might add another:
-  // longPressScreen,
 }
 
 class SettingsScreen extends StatefulWidget {
@@ -48,7 +47,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         loadedMethod = HiddenAccessTriggerMethod.longPressAppBar;
       }
     }
-    // Ensure the loaded method is one of the currently allowed ones
     if (!HiddenAccessTriggerMethod.values.contains(loadedMethod)) {
       loadedMethod = HiddenAccessTriggerMethod.longPressAppBar;
     }
@@ -73,7 +71,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   String _getHiddenAccessMethodDescription(HiddenAccessTriggerMethod method) {
-    // Ensure this matches the enum definition
     switch (method) {
       case HiddenAccessTriggerMethod.longPressAppBar:
         return "Long-press (Hold) App Bar";
@@ -83,7 +80,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return "Pinch In on Screen";
       case HiddenAccessTriggerMethod.pinchOutScreen:
         return "Pinch Out on Screen";
-      // default: return "Unknown"; // Should not happen with restricted enum
     }
   }
 
@@ -158,9 +154,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
       },
     ).then((selectedValue) {
       if (selectedValue != null) {
-        // Use the ThemeProvider to set the theme
-        // No need to call setState here as Provider will handle UI updates
         themeProvider.setThemeMode(selectedValue);
+      }
+    });
+  }
+
+  void _showCategoryTagStyleSelectionDialog(ThemeProvider themeProvider) {
+    showDialog<CategoryTagStyle>(
+      context: context,
+      builder: (BuildContext context) {
+        return SimpleDialog(
+          title: Text(
+            'Select Category Tag Style',
+            style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+          ),
+          // This will automatically include 'glassmorphic' if it's in the CategoryTagStyle enum
+          children: CategoryTagStyle.values.map((style) {
+            // Capitalize the first letter of the enum name for display
+            String styleName = style.name.replaceFirstMapped(
+              style.name[0],
+              (match) => style.name[0].toUpperCase(),
+            );
+            return RadioListTile<CategoryTagStyle>(
+              title: Text(
+                styleName, // e.g., "Original", "Neumorphic", "Glassmorphic"
+                style: GoogleFonts.poppins(),
+              ),
+              value: style,
+              groupValue: themeProvider.categoryTagStyle,
+              onChanged: (CategoryTagStyle? value) {
+                if (value != null) {
+                  Navigator.pop(context, value);
+                }
+              },
+              activeColor: Theme.of(context).colorScheme.primary,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 4.0,
+              ),
+            );
+          }).toList(),
+        );
+      },
+    ).then((selectedValue) {
+      if (selectedValue != null) {
+        themeProvider.setCategoryTagStyle(selectedValue);
       }
     });
   }
@@ -178,7 +216,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         style: GoogleFonts.poppins(
           fontSize: 14,
           fontWeight: FontWeight.w600,
-          color: Theme.of(context).colorScheme.primary, // Use theme color
+          color: Theme.of(context).colorScheme.primary,
         ),
       ),
     );
@@ -193,17 +231,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }) {
     final theme = Theme.of(context);
     return Material(
-      // Use cardTheme color for background of the item container
       color: theme.cardTheme.color ?? theme.cardColor,
       child: ListTile(
-        leading: Icon(
-          icon,
-          color: theme.colorScheme.secondary,
-        ), // Use theme color
-        title: Text(
-          title,
-          style: GoogleFonts.poppins(fontSize: 16),
-        ), // Text color will be from theme
+        leading: Icon(icon, color: theme.colorScheme.secondary),
+        title: Text(title, style: GoogleFonts.poppins(fontSize: 16)),
         subtitle: subtitle != null
             ? Text(
                 subtitle,
@@ -211,7 +242,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   fontSize: 13,
                   color: theme.hintColor,
                 ),
-              ) // Use theme hint color
+              )
             : null,
         trailing:
             trailing ??
@@ -220,7 +251,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16.0,
           vertical: 8.0,
-        ), // Increased vertical padding
+        ),
       ),
     );
   }
@@ -228,28 +259,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // Access ThemeProvider. Use listen: true to rebuild when theme changes.
     final themeProvider = Provider.of<ThemeProvider>(context);
 
     return Scaffold(
-      // Scaffold background color is handled by the global theme
       appBar: AppBar(
-        // AppBar properties are handled by the global theme's appBarTheme
         title: Text(
           'Settings',
           style: GoogleFonts.poppins(fontWeight: FontWeight.w500),
         ),
         leading: IconButton(
-          icon: const Icon(
-            Icons.arrow_back_ios_new,
-          ), // Icon color from appBarTheme
+          icon: const Icon(Icons.arrow_back_ios_new),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
       body: ListView(
         children: <Widget>[
           _buildSettingsSectionTitle(context, 'SECRET VAULT'),
-          // Group items visually using a Container styled like a card
           Container(
             margin: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
             decoration: BoxDecoration(
@@ -260,9 +285,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   .borderRadius
                               as BorderRadius)
                           .topLeft
-                          .x // Example to get radius
+                          .x
                     : 12.0,
-              ), // Default radius if not RoundedRectangleBorder
+              ),
               boxShadow:
                   theme.cardTheme.elevation != null &&
                       theme.cardTheme.elevation! > 0
@@ -276,7 +301,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   : [],
             ),
             child: ClipRRect(
-              // To clip ListTile's InkWell ripple to rounded corners
               borderRadius: BorderRadius.circular(
                 theme.cardTheme.shape is RoundedRectangleBorder
                     ? ((theme.cardTheme.shape as RoundedRectangleBorder)
@@ -346,8 +370,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       themeProvider.themeMode,
                     ),
                     onTap: () {
-                      // Pass the provider instance (listen: false not needed here as it's for one-off action)
                       _showThemeSelectionDialog(
+                        Provider.of<ThemeProvider>(context, listen: false),
+                      );
+                    },
+                  ),
+                  const Divider(height: 1, indent: 16, endIndent: 16),
+                  _buildSettingsItem(
+                    icon: Icons.style_outlined,
+                    title: 'Category Tag Style',
+                    // This will display the current style, e.g., "Glassmorphic"
+                    subtitle: themeProvider.categoryTagStyle.name
+                        .replaceFirstMapped(
+                          themeProvider.categoryTagStyle.name[0],
+                          (match) => themeProvider.categoryTagStyle.name[0]
+                              .toUpperCase(),
+                        ),
+                    onTap: () {
+                      _showCategoryTagStyleSelectionDialog(
                         Provider.of<ThemeProvider>(context, listen: false),
                       );
                     },
@@ -398,17 +438,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _buildSettingsItem(
                     icon: Icons.info_outline,
                     title: 'App Version',
-                    subtitle:
-                        '1.0.0', // This would be dynamic (e.g., from package_info_plus)
-                    trailing:
-                        const SizedBox.shrink(), // No chevron for info items
-                    onTap: null, // Not tappable
+                    subtitle: '1.0.0', // Replace with dynamic version later
+                    trailing: const SizedBox.shrink(),
+                    onTap: null,
                   ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 30), // Bottom padding
+          const SizedBox(height: 30),
         ],
       ),
     );
