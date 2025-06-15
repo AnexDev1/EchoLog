@@ -1,4 +1,4 @@
-package com.example.echolog
+package com.anexon.echolog
 
 import io.flutter.embedding.android.FlutterActivity
 
