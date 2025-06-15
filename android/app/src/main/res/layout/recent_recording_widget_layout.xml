@@ -1,41 +1,43 @@
-<!-- filepath: android/app/src/main/res/layout/recent_recording_widget_layout.xml -->
+<?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/widget_container"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:minHeight="72dp"
     android:orientation="vertical"
-    android:padding="12dp"
-    android:background="@drawable/widget_background"> <!-- Optional: Create a background drawable -->
-
-    <TextView
-        android:id="@+id/widget_header_text"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Recent Echolog"
-        android:textSize="16sp"
-        android:textStyle="bold"
-        android:textColor="?android:attr/textColorPrimary" />
+    android:padding="16dp"
+    android:background="@drawable/widget_background_content">
 
     <TextView
         android:id="@+id/widget_recording_title"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="Loading..."
-        android:textSize="14sp"
-        android:maxLines="1"
-        android:ellipsize="end"
-        android:textColor="?android:attr/textColorSecondary" />
+        tools:text="Important Meeting Recap"
+        android:textColor="@android:color/white"
+        android:textSize="17sp"
+        android:textStyle="bold"
+        android:maxLines="2"
+        android:ellipsize="end"/>
 
     <TextView
         android:id="@+id/widget_recording_duration"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
-        android:text=""
-        android:textSize="12sp"
-        android:textColor="?android:attr/textColorTertiary" />
+        tools:text="Length: 05:30"
+        android:textColor="#C0FFFFFF"
+        android:textSize="13sp"
+        android:layout_marginTop="4dp"/>
 
-    <!-- You could add a play icon/button here if desired,
-         or make the whole widget clickable -->
+   
+    <TextView
+        android:id="@+id/widget_footer_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Tap to open in Echolog"
+        android:textColor="#80FFFFFF"
+        android:textSize="11sp"
+        android:gravity="end"
+        android:layout_marginTop="8dp"/>
+
 </LinearLayout>
