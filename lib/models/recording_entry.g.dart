@@ -8,7 +8,7 @@ part of 'recording_entry.dart';
 
 class RecordingEntryAdapter extends TypeAdapter<RecordingEntry> {
   @override
-  final int typeId = 0;
+  final int typeId = 1;
 
   @override
   RecordingEntry read(BinaryReader reader) {
@@ -24,17 +24,19 @@ class RecordingEntryAdapter extends TypeAdapter<RecordingEntry> {
       dateRecorded: fields[4] as DateTime,
       moodName: fields[5] as String,
       moodColor: fields[6] as Color,
-      moodEmoji: fields[7] as String,
-      moodIconColor: fields[8] as Color,
-      isPlaying: fields[9] as bool,
-      transcription: fields[10] as String?,
+      moodIconColor: fields[7] as Color,
+      moodEmoji: fields[8] as String,
+      transcription: fields[9] as String?,
+      waveformPoints: (fields[10] as List?)?.cast<double>(),
+      summaryPreview: fields[11] as String?,
+      isPlaying: fields[12] as bool,
     );
   }
 
   @override
   void write(BinaryWriter writer, RecordingEntry obj) {
     writer
-      ..writeByte(11)
+      ..writeByte(13)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -50,13 +52,17 @@ class RecordingEntryAdapter extends TypeAdapter<RecordingEntry> {
       ..writeByte(6)
       ..write(obj.moodColor)
       ..writeByte(7)
-      ..write(obj.moodEmoji)
-      ..writeByte(8)
       ..write(obj.moodIconColor)
+      ..writeByte(8)
+      ..write(obj.moodEmoji)
       ..writeByte(9)
-      ..write(obj.isPlaying)
+      ..write(obj.transcription)
       ..writeByte(10)
-      ..write(obj.transcription);
+      ..write(obj.waveformPoints)
+      ..writeByte(11)
+      ..write(obj.summaryPreview)
+      ..writeByte(12)
+      ..write(obj.isPlaying);
   }
 
   @override

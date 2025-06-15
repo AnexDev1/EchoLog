@@ -37,7 +37,9 @@ Future<void> main() async {
   if (!Hive.isAdapterRegistered(DurationAdapter().typeId)) {
     Hive.registerAdapter(DurationAdapter());
   }
-
+  if (!Hive.isAdapterRegistered(RecordingEntryAdapter().typeId)) {
+    Hive.registerAdapter(RecordingEntryAdapter());
+  }
   await Hive.openBox<RecordingEntry>(recordingsBoxName);
   await Hive.openBox<CustomCategory>(customCategoriesBoxName);
   await Hive.openBox<RecordingEntry>(hiddenRecordingsBoxName);

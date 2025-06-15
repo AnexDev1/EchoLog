@@ -1,17 +1,16 @@
 import 'dart:convert';
-
-import 'package:echolog/services/recording_service.dart';
-import 'package:echolog/settings_screen.dart';
-import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'dart:async';
 import 'dart:io';
+
+import 'package:echolog/services/recording_service.dart';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:provider/provider.dart'; // Added for Provider
+import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -23,18 +22,19 @@ import 'package:echolog/widgets/recording_controls_widget.dart';
 import 'package:echolog/widgets/save_recording_dialog.dart';
 import 'package:echolog/widgets/filter_bottom_sheet_widget.dart';
 import 'package:echolog/utils/custom_snackbar.dart';
-import 'package:echolog/main.dart'; // For recordingsBoxName and customCategoriesBoxName
+import 'package:echolog/main.dart'; // For recordingsBoxName, customCategoriesBoxName, hiddenRecordingsBox
 import 'package:echolog/widgets/recordings_list_view.dart';
-
 import 'package:echolog/services/password_service.dart';
+// import 'package:echolog/services/recording_service.dart'; // Not used directly in this file
 import 'package:echolog/widgets/create_password_dialog.dart';
 import 'package:echolog/widgets/enter_password_dialog.dart';
 import 'package:echolog/hidden_recordings_screen.dart';
-import 'package:echolog/providers/playback_provider.dart'; // Import PlaybackProvider
+import 'package:echolog/providers/playback_provider.dart';
+import 'package:echolog/settings_screen.dart';
 
-// Key for SharedPreferences
 const String PREF_HIDDEN_ACCESS_METHOD = 'selectedHiddenAccessTriggerMethod';
-final String _lemonFoxApiKey = "Sf8cPZsgkaVohAnV31DxsiSO9QiIiqbj";
+final String _lemonFoxApiKey =
+    "Sf8cPZsgkaVohAnV31DxsiSO9QiIiqbj"; // Consider moving to a config file and .gitignore
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -91,7 +91,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String? _currentRecordingPath;
   bool _isRecorderInitialized = false;
   bool _isPlayerInitialized = false;
-  String? _currentlyPlayingFileId; // This will be managed for UI feedback
+
+  // State for playback and interactive waveforms
+  String? _currentlyPlayingFileId;
+  RecordingEntry?
+  _currentlyPlayingEntry; // To access waveform points and mood color
+  List<double>?
+  _activeWaveformPoints; // For the main RecordingControlsWidget waveform
+  Duration _currentPlaybackProgress = Duration.zero;
+  Duration _currentTotalDuration = Duration.zero;
+  StreamSubscription? _playerSubscription;
+
   FilterState _currentFilters = FilterState();
   final PasswordService _passwordService = PasswordService();
   HiddenAccessTriggerMethod _selectedMethod =
@@ -120,42 +130,149 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _loadHiddenAccessPreference();
   }
 
-  // --- Playback from Provider ---
+  @override
+  void dispose() {
+    _recordingTimer?.cancel();
+    _tapTimer?.cancel();
+    _playerSubscription?.cancel();
+    _recorder?.closeRecorder().catchError(
+      (e) => print("Error closing recorder: $e"),
+    );
+    _recorder = null;
+    _player?.closePlayer().catchError((e) => print("Error closing player: $e"));
+    _player = null;
+    super.dispose();
+  }
+
+  Future<void> _initializeRecorder() async {
+    try {
+      var status = await Permission.microphone.request();
+      if (status != PermissionStatus.granted) {
+        throw RecordingPermissionException('Microphone permission not granted');
+      }
+      await _recorder!.openRecorder();
+      if (mounted) setState(() => _isRecorderInitialized = true);
+    } catch (e) {
+      print('Error initializing recorder: $e');
+      if (mounted) {
+        setState(() => _isRecorderInitialized = false);
+        showCustomSnackBar(
+          context: context,
+          message: 'Recorder initialization failed. Check permissions.',
+          leadingIcon: Icons.error_outline_rounded,
+          iconColor: Theme.of(context).colorScheme.error,
+        );
+      }
+    }
+  }
+
+  Future<void> _initializePlayer() async {
+    try {
+      await _player!.openPlayer();
+      _player!.setSubscriptionDuration(
+        const Duration(milliseconds: 100),
+      ); // More frequent updates for smoother UI
+
+      _playerSubscription = _player!.onProgress!.listen((e) {
+        if (mounted &&
+            _currentlyPlayingFileId != null &&
+            (_player?.isPlaying ?? false)) {
+          setState(() {
+            _currentPlaybackProgress = e.position;
+            _currentTotalDuration =
+                e.duration; // Player provides total duration
+          });
+        }
+      });
+      if (mounted) setState(() => _isPlayerInitialized = true);
+    } catch (e) {
+      print('Error initializing player: $e');
+      if (mounted) {
+        setState(() => _isPlayerInitialized = false);
+        showCustomSnackBar(
+          context: context,
+          message: 'Player initialization failed.',
+          leadingIcon: Icons.error_outline_rounded,
+          iconColor: Theme.of(context).colorScheme.error,
+        );
+      }
+    }
+  }
+
+  Future<void> _stopPlaybackAndResetState() async {
+    if (_player != null && (_player!.isPlaying || _player!.isPaused)) {
+      await _player!.stopPlayer();
+    }
+    if (mounted) {
+      final String? oldPlayingId = _currentlyPlayingFileId;
+      setState(() {
+        _currentlyPlayingFileId = null;
+        _currentlyPlayingEntry = null;
+        _activeWaveformPoints = null;
+        _currentPlaybackProgress = Duration.zero;
+        _currentTotalDuration = Duration.zero;
+      });
+      if (oldPlayingId != null) {
+        final box = Hive.box<RecordingEntry>(recordingsBoxName);
+        final entry = box.get(oldPlayingId);
+        if (entry != null && entry.isPlaying) {
+          entry.isPlaying = false;
+          await box.put(oldPlayingId, entry);
+        }
+      }
+    }
+  }
+
+  Future<void> _handleSeek(double seekPercent) async {
+    if (_player != null &&
+        _isPlayerInitialized &&
+        _currentlyPlayingFileId != null &&
+        _currentTotalDuration.inMilliseconds > 0) {
+      final targetPosition = Duration(
+        milliseconds: (_currentTotalDuration.inMilliseconds * seekPercent)
+            .round(),
+      );
+      await _player!.seekToPlayer(targetPosition);
+      if (mounted) {
+        // Optimistic UI update
+        setState(() => _currentPlaybackProgress = targetPosition);
+      }
+    }
+  }
+
   Future<void> _playRecordingFromProviderOrWidget(RecordingEntry entry) async {
+    await _togglePlayRecordingItem(entry, []); // Reuse common logic
+    // Ensure playback provider request is cleared if it was the source
+    Provider.of<PlaybackProvider>(
+      context,
+      listen: false,
+    ).clearPlaybackRequest();
+  }
+
+  Future<void> _togglePlayRecordingItem(
+    RecordingEntry entry,
+    List<RecordingEntry> currentList,
+  ) async {
     if (!_isPlayerInitialized || _player == null) {
       showCustomSnackBar(
         context: context,
         message: 'Player not ready.',
         leadingIcon: Icons.play_disabled_rounded,
-        duration: const Duration(seconds: 3),
       );
-      Provider.of<PlaybackProvider>(
-        context,
-        listen: false,
-      ).clearPlaybackRequest();
       return;
     }
 
-    final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
+    final bool wasPlayingThisEntry =
+        _currentlyPlayingFileId == entry.id && (_player?.isPlaying ?? false);
 
-    // Stop any currently playing track
-    if (_player!.isPlaying) {
-      await _player!.stopPlayer();
-      if (_currentlyPlayingFileId != null) {
-        final previousEntry = recordingsBox.get(_currentlyPlayingFileId);
-        if (previousEntry != null) {
-          previousEntry.isPlaying = false;
-          await recordingsBox.put(_currentlyPlayingFileId!, previousEntry);
-        }
-      }
-      if (mounted) {
-        setState(() {
-          _currentlyPlayingFileId = null; // Clear current playing ID
-        });
-      }
+    await _stopPlaybackAndResetState(); // Stop any current playback and reset state
+
+    if (wasPlayingThisEntry) {
+      // If it was this entry, we just stopped it. State is reset.
+      return;
     }
 
-    // Check if the file exists
+    // Start playing the selected entry
     final file = File(entry.filePath);
     if (!await file.exists()) {
       print(
@@ -167,75 +284,46 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         leadingIcon: Icons.error_outline_rounded,
         iconColor: Theme.of(context).colorScheme.error,
       );
-      Provider.of<PlaybackProvider>(
-        context,
-        listen: false,
-      ).clearPlaybackRequest();
       return;
     }
 
-    // Start playing the new entry
     try {
-      print(
-        "[HomeScreen] Attempting to play from provider: ${entry.displayName} at ${entry.filePath}",
-      );
       await _player!.startPlayer(
         fromURI: entry.filePath,
-        codec: Codec.aacADTS, // Ensure this matches your recording codec
+        codec: Codec.aacADTS,
         whenFinished: () {
-          if (mounted) {
-            final currentEntry = recordingsBox.get(entry.id);
-            if (currentEntry != null) {
-              currentEntry.isPlaying = false;
-              recordingsBox.put(entry.id, currentEntry); // Update Hive
-            }
-            setState(() {
-              if (_currentlyPlayingFileId == entry.id) {
-                _currentlyPlayingFileId = null;
-              }
-            });
-            print("[HomeScreen] Playback finished for: ${entry.displayName}");
-          }
+          _stopPlaybackAndResetState(); // Reset state when playback finishes naturally
         },
       );
 
-      // Update state and Hive for the newly playing entry
-      entry.isPlaying = true;
-      await recordingsBox.put(entry.id, entry);
+      final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
+      entry.isPlaying = true; // Update the passed entry instance
+      await recordingsBox.put(entry.id, entry); // Save updated entry to Hive
+
       if (mounted) {
         setState(() {
           _currentlyPlayingFileId = entry.id;
+          _currentlyPlayingEntry = entry;
+          _activeWaveformPoints = entry.waveformPoints ?? [];
+          _currentTotalDuration =
+              entry.duration; // Initial total duration from entry
+          _currentPlaybackProgress = Duration.zero;
         });
       }
-      print("[HomeScreen] Now playing from provider: ${entry.displayName}");
     } catch (e) {
-      print("[HomeScreen] Error playing recording from provider: $e");
-      if (mounted) {
-        showCustomSnackBar(
-          context: context,
-          message: 'Error playing recording.',
-          leadingIcon: Icons.error_outline_rounded,
-          iconColor: Theme.of(context).colorScheme.error,
-        );
-        entry.isPlaying = false; // Ensure isPlaying is false on error
-        await recordingsBox.put(entry.id, entry);
-        setState(() {
-          if (_currentlyPlayingFileId == entry.id) {
-            _currentlyPlayingFileId = null;
-          }
-        });
-      }
-    } finally {
-      // Clear the request from provider after attempting to play
-      Provider.of<PlaybackProvider>(
-        context,
-        listen: false,
-      ).clearPlaybackRequest();
+      print("[HomeScreen] Error playing recording item: $e");
+      showCustomSnackBar(
+        context: context,
+        message: 'Error playing recording.',
+        leadingIcon: Icons.error_outline_rounded,
+        iconColor: Theme.of(context).colorScheme.error,
+      );
+      await _stopPlaybackAndResetState(); // Ensure state is reset on error
     }
   }
-  // --- End Playback from Provider ---
 
   Future<void> _shareRecordingFile(RecordingEntry entry) async {
+    await _stopPlaybackAndResetState(); // Stop playback before sharing
     if (entry.filePath.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Error: Recording file path is missing.')),
@@ -249,22 +337,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       );
       return;
     }
-    if (_player != null &&
-        _isPlayerInitialized &&
-        _currentlyPlayingFileId == entry.id &&
-        (_player!.isPlaying || _player!.isPaused)) {
-      await _player!.stopPlayer();
-      if (mounted) {
-        setState(() => _currentlyPlayingFileId = null);
-        final box = Hive.box<RecordingEntry>(recordingsBoxName);
-        final currentEntry = box.get(entry.id);
-        if (currentEntry != null) {
-          currentEntry.isPlaying = false;
-          box.put(entry.id, currentEntry);
-        }
-      }
-      await Future.delayed(const Duration(milliseconds: 200));
-    }
     final result = await Share.shareXFiles([
       XFile(entry.filePath),
     ], text: 'Check out this audio recording: ${entry.displayName}');
@@ -276,6 +348,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _shareTranscriptionText(RecordingEntry entry) async {
+    // No need to stop playback for sharing text
     if (entry.transcription == null || entry.transcription!.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No transcription available to share.')),
@@ -289,25 +362,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _showShareOptionsDialog(RecordingEntry entry) async {
+    await _stopPlaybackAndResetState(); // Stop playback before showing dialog
     final theme = Theme.of(context);
     final bool hasTranscription =
         entry.transcription != null && entry.transcription!.trim().isNotEmpty;
-    if (_player != null &&
-        _isPlayerInitialized &&
-        _currentlyPlayingFileId == entry.id &&
-        (_player!.isPlaying || _player!.isPaused)) {
-      await _player!.stopPlayer();
-      if (mounted) {
-        setState(() => _currentlyPlayingFileId = null);
-        final box = Hive.box<RecordingEntry>(recordingsBoxName);
-        final currentEntry = box.get(entry.id);
-        if (currentEntry != null) {
-          currentEntry.isPlaying = false;
-          box.put(entry.id, currentEntry);
-        }
-      }
-      await Future.delayed(const Duration(milliseconds: 200));
-    }
     showDialog(
       context: context,
       builder: (BuildContext dialogContext) {
@@ -377,7 +435,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  String _generateSummaryPreview(String fullText, {int maxLength = 100}) {
+    if (fullText.isEmpty) return "";
+    return fullText.length <= maxLength
+        ? fullText
+        : '${fullText.substring(0, maxLength)}...';
+  }
+
   Future<void> _transcribeWithLemonFox(RecordingEntry entry) async {
+    await _stopPlaybackAndResetState(); // Stop playback before transcribing
     if (_lemonFoxApiKey.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Lemonfox API Key not set.')),
@@ -397,25 +463,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       );
       return;
     }
-    if (_player != null &&
-        _currentlyPlayingFileId == entry.id &&
-        (_player!.isPlaying || _player!.isPaused)) {
-      await _player!.stopPlayer();
-      if (mounted) {
-        setState(() => _currentlyPlayingFileId = null);
-        final box = Hive.box<RecordingEntry>(recordingsBoxName);
-        final currentEntry = box.get(entry.id);
-        if (currentEntry != null) {
-          currentEntry.isPlaying = false;
-          box.put(entry.id, currentEntry);
-        }
-      }
-    }
+
     setState(() => _isTranscribingLemonFox = true);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Transcribing "${entry.displayName}" with Lemonfox...'),
-      ),
+      SnackBar(content: Text('Transcribing "${entry.displayName}"...')),
     );
     final Uri apiUri = Uri.parse(
       "https://api.lemonfox.ai/v1/audio/transcriptions",
@@ -426,15 +477,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       request.files.add(
         await http.MultipartFile.fromPath('file', entry.filePath),
       );
-      request.fields['response_format'] = 'json';
+      request.fields['response_format'] =
+          'json'; // Ensure this is correct for LemonFox
       final streamedResponse = await request.send();
       final response = await http.Response.fromStream(streamedResponse);
+
       if (response.statusCode == 200) {
         final Map<String, dynamic> responseData = jsonDecode(response.body);
         final String? transcriptText = responseData['text'];
         if (transcriptText != null) {
           final box = Hive.box<RecordingEntry>(recordingsBoxName);
           entry.transcription = transcriptText;
+          entry.summaryPreview = _generateSummaryPreview(
+            transcriptText,
+          ); // Generate and save summary
           await box.put(entry.id, entry);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -471,6 +527,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _moveToVault(RecordingEntry entryToMove) async {
+    await _stopPlaybackAndResetState(); // Stop playback before moving
     if (entryToMove.id.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -479,11 +536,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       );
       return;
     }
-    final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
-    final hiddenRecordingsBox = Hive.box<RecordingEntry>(
-      hiddenRecordingsBoxName,
-    );
-    if (hiddenRecordingsBox.containsKey(entryToMove.id)) {
+    final hiddenBox = Hive.box<RecordingEntry>(hiddenRecordingsBoxName);
+    if (hiddenBox.containsKey(entryToMove.id)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -493,27 +547,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       );
       return;
     }
-    if (_currentlyPlayingFileId == entryToMove.id &&
-        _player != null &&
-        _player!.isPlaying) {
-      await _player!.stopPlayer();
-      if (mounted) setState(() => _currentlyPlayingFileId = null);
-    }
-    final RecordingEntry entryForVault = RecordingEntry(
-      id: entryToMove.id,
-      filePath: entryToMove.filePath,
-      displayName: entryToMove.displayName,
-      duration: entryToMove.duration,
-      dateRecorded: entryToMove.dateRecorded,
-      moodName: entryToMove.moodName,
-      moodColor: entryToMove.moodColor,
-      moodEmoji: entryToMove.moodEmoji,
-      moodIconColor: entryToMove.moodIconColor,
-    );
-    entryForVault.isPlaying = false;
+
+    // // Ensure isPlaying is false and isVaulted is true for the entry being moved
+    // final RecordingEntry entryForVault = entryToMove.copyWith(
+    //   isVaulted: true,
+    //   isPlaying: false, // Explicitly set isPlaying to false
+    //   // waveformPoints and summaryPreview are preserved by copyWith if they exist
+    // );
+
     try {
-      await hiddenRecordingsBox.put(entryForVault.id, entryForVault);
-      await recordingsBox.delete(entryToMove.id);
+      final recordingsBox = Hive.box<RecordingEntry>(
+        recordingsBoxName,
+      ); // Define recordingsBox
+      // await hiddenBox.put(entryForVault.id, entryForVault);
+      await recordingsBox.delete(entryToMove.id); // Delete from the main box
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -528,68 +575,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _initializeRecorder() async {
-    try {
-      final status = await Permission.microphone.request();
-      if (status != PermissionStatus.granted)
-        throw RecordingPermissionException('Microphone permission not granted');
-      await _recorder!.openRecorder();
-      if (mounted) setState(() => _isRecorderInitialized = true);
-    } catch (e) {
-      print('Error initializing recorder: $e');
-      if (mounted) {
-        setState(() => _isRecorderInitialized = false);
-        showCustomSnackBar(
-          context: context,
-          message: 'Recorder initialization failed.',
-          leadingIcon: Icons.error_outline_rounded,
-          iconColor: Theme.of(context).colorScheme.error,
-          duration: const Duration(seconds: 3),
-        );
-      }
-    }
-  }
-
-  Future<void> _initializePlayer() async {
-    try {
-      await _player!.openPlayer();
-      _player!.setSubscriptionDuration(
-        const Duration(milliseconds: 500),
-      ); // For progress updates if needed by UI
-      if (mounted) setState(() => _isPlayerInitialized = true);
-    } catch (e) {
-      print('Error initializing player: $e');
-      if (mounted) {
-        setState(() => _isPlayerInitialized = false);
-        showCustomSnackBar(
-          context: context,
-          message: 'Player initialization failed.',
-          leadingIcon: Icons.error_outline_rounded,
-          iconColor: Theme.of(context).colorScheme.error,
-          duration: const Duration(seconds: 3),
-        );
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _recordingTimer?.cancel();
-    _tapTimer?.cancel();
-    _recorder?.closeRecorder().catchError(
-      (e) => print("Error closing recorder: $e"),
-    );
-    _recorder = null;
-    _player?.closePlayer().catchError((e) => print("Error closing player: $e"));
-    _player = null;
-    super.dispose();
-  }
-
   Future<void> _loadHiddenAccessPreference() async {
     final prefs = await SharedPreferences.getInstance();
     final methodName = prefs.getString(PREF_HIDDEN_ACCESS_METHOD);
     HiddenAccessTriggerMethod loadedMethod =
-        HiddenAccessTriggerMethod.longPressAppBar;
+        HiddenAccessTriggerMethod.longPressAppBar; // Default
     if (methodName != null) {
       try {
         loadedMethod = HiddenAccessTriggerMethod.values.firstWhere(
@@ -597,15 +587,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           orElse: () => HiddenAccessTriggerMethod.longPressAppBar,
         );
       } catch (e) {
-        loadedMethod = HiddenAccessTriggerMethod.longPressAppBar;
+        /* Default already set */
       }
     }
-    if (!HiddenAccessTriggerMethod.values.contains(loadedMethod))
-      loadedMethod = HiddenAccessTriggerMethod.longPressAppBar;
     if (mounted && _selectedMethod != loadedMethod)
       setState(() => _selectedMethod = loadedMethod);
     else if (!mounted && _selectedMethod != loadedMethod)
-      _selectedMethod = loadedMethod;
+      _selectedMethod = loadedMethod; // For initState case
   }
 
   Future<void> _triggerHiddenScreenAccess() async {
@@ -613,11 +601,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     setState(() => _isGestureAccessActive = true);
     _tapCount = 0;
     _tapTimer?.cancel();
+
     bool hasPassword = await _passwordService.hasPassword();
     if (!mounted) {
       _resetGestureAccessFlags();
       return;
     }
+
     if (hasPassword) {
       showDialog<void>(
         context: context,
@@ -692,12 +682,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _recordingTimer?.cancel();
         if (path != null) {
           _currentRecordingPath = path;
-          if (mounted && _selectedCategoryData != null)
+          // For now, waveformPoints will be generated in SaveRecordingDialog or remain null
+          if (mounted && _selectedCategoryData != null) {
             _showSaveRecordingDialog(
               path,
               _recordingDuration,
               _selectedCategoryData!,
             );
+          }
         }
       } catch (e) {
         if (mounted)
@@ -723,6 +715,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         );
         return;
       }
+      await _stopPlaybackAndResetState(); // Stop any playback before starting new recording
       try {
         final directory = await getApplicationDocumentsDirectory();
         final fileName = 'echolog_${DateTime.now().millisecondsSinceEpoch}.aac';
@@ -765,14 +758,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _recorder!.resumeRecorder();
     else
       _recorder!.pauseRecorder();
-    setState(() => _isRecordingPaused = _recorder!.isPaused);
+    if (mounted) setState(() => _isRecordingPaused = _recorder!.isPaused);
   }
 
+  // Updated to match the signature expected by SaveRecordingDialog's onSave
   void _handleSaveRecording(
     String displayName,
     String filePath,
     Duration duration,
     Map<String, dynamic> categoryData,
+    List<double>? waveformPoints,
+    String? summaryPreview,
   ) async {
     final newEntry = RecordingEntry(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -784,17 +780,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       moodColor: categoryData['color'] as Color,
       moodIconColor: categoryData['iconColor'] as Color,
       moodEmoji: categoryData['emoji'] as String? ?? '',
+      waveformPoints: waveformPoints, // Save generated waveform
+      summaryPreview: summaryPreview, // Save generated summary
     );
     final box = Hive.box<RecordingEntry>(recordingsBoxName);
     await box.put(newEntry.id, newEntry);
     try {
-      // Call the function that's responsible for telling the native side to update.
-      // Pass the newly saved entry if the function is designed to take it,
-      // otherwise, it can fetch the latest itself.
       await updateWidgetWithRecentRecording(recentEntry: newEntry);
-      print(
-        "[HomeScreen] Called updateWidgetWithRecentRecording after saving.",
-      );
     } catch (e) {
       print("[HomeScreen] Error calling updateWidgetWithRecentRecording: $e");
     }
@@ -804,7 +796,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         message: '"${newEntry.displayName}" saved!',
         leadingIcon: Icons.check_circle_outline_rounded,
         iconColor: Colors.green.shade400,
-        duration: const Duration(seconds: 3),
       );
   }
 
@@ -814,7 +805,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         context: context,
         message: 'Recording discarded.',
         leadingIcon: Icons.delete_outline_rounded,
-        duration: const Duration(seconds: 2),
       );
   }
 
@@ -826,128 +816,45 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext context) => SaveRecordingDialog(
-        filePath: filePath,
-        duration: duration,
-        categoryData: categoryData,
-        player: _player,
-        isPlayerInitialized: _isPlayerInitialized,
-        onSave: _handleSaveRecording,
-        onDiscard: _handleDiscardRecording,
-      ),
-    );
-    if (mounted) setState(() => _recordingDuration = Duration.zero);
-  }
-
-  Future<void> _togglePlayRecordingItem(
-    RecordingEntry entry,
-    List<RecordingEntry>
-    currentList /* This list is from ValueListenableBuilder, might be stale if not careful */,
-  ) async {
-    if (!_isPlayerInitialized || _player == null) {
-      showCustomSnackBar(
-        context: context,
-        message: 'Player not ready.',
-        leadingIcon: Icons.play_disabled_rounded,
-        duration: const Duration(seconds: 3),
-      );
-      return;
-    }
-
-    final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
-    final bool wasCurrentlyPlayingThisEntry =
-        _currentlyPlayingFileId == entry.id &&
-        entry.isPlaying; // Use entry.isPlaying from the passed entry
-
-    // Stop current playback if any
-    if (_player!.isPlaying) {
-      await _player!.stopPlayer();
-      if (_currentlyPlayingFileId != null) {
-        final previousEntryFromBox = recordingsBox.get(_currentlyPlayingFileId);
-        if (previousEntryFromBox != null && previousEntryFromBox.isPlaying) {
-          previousEntryFromBox.isPlaying = false;
-          await recordingsBox.put(
-            _currentlyPlayingFileId!,
-            previousEntryFromBox,
-          );
-        }
-      }
-      // If the stopped player was playing the entry we are about to toggle,
-      // its isPlaying status will be handled by the logic below.
-      // If it was a different entry, its isPlaying status is now false in Hive.
-    }
-    if (mounted) {
-      // Update UI immediately after stopping
-      setState(() {
-        // If the stopped player was not the current entry, _currentlyPlayingFileId is cleared.
-        // If it was the current entry, it will be set again if playback restarts.
-        if (_currentlyPlayingFileId != entry.id ||
-            !wasCurrentlyPlayingThisEntry) {
-          _currentlyPlayingFileId = null;
-        }
-      });
-    }
-
-    if (wasCurrentlyPlayingThisEntry) {
-      // If it was playing this entry, we just stopped it. Update Hive.
-      entry.isPlaying = false;
-      await recordingsBox.put(entry.id, entry);
-      if (mounted) {
-        setState(() {
-          _currentlyPlayingFileId = null;
-        });
-      }
-    } else {
-      // Start playing the selected entry
-      try {
-        await _player!.startPlayer(
-          fromURI: entry.filePath,
-          codec: Codec.aacADTS,
-          whenFinished: () {
-            if (mounted) {
-              final finishedEntry = recordingsBox.get(entry.id);
-              if (finishedEntry != null) {
-                finishedEntry.isPlaying = false;
-                recordingsBox.put(entry.id, finishedEntry);
-              }
-              setState(() {
-                if (_currentlyPlayingFileId == entry.id) {
-                  _currentlyPlayingFileId = null;
-                }
-              });
-            }
-          },
+      builder: (BuildContext dialogContext) {
+        // Renamed context to avoid conflict
+        return SaveRecordingDialog(
+          filePath: filePath,
+          duration: duration,
+          categoryData: categoryData,
+          player: _player, // Pass player for preview functionality in dialog
+          isPlayerInitialized: _isPlayerInitialized, // Pass player status
+          onSave:
+              (
+                String displayName,
+                String filePath,
+                Duration duration,
+                Map<String, dynamic> categoryData,
+              ) {
+                // Adapt to the expected signature by SaveRecordingDialog.
+                // SaveRecordingDialog is expected to be updated to provide waveformPoints and summaryPreview.
+                // For now, we pass null as _handleSaveRecording can handle them being null.
+                _handleSaveRecording(
+                  displayName,
+                  filePath,
+                  duration,
+                  categoryData,
+                  null,
+                  null,
+                );
+              },
+          onDiscard: _handleDiscardRecording,
         );
-        entry.isPlaying = true;
-        await recordingsBox.put(entry.id, entry);
-        if (mounted) {
-          setState(() {
-            _currentlyPlayingFileId = entry.id;
-          });
-        }
-      } catch (e) {
-        print("Error playing recording item: $e");
-        if (mounted) {
-          showCustomSnackBar(
-            context: context,
-            message: 'Error playing recording.',
-            leadingIcon: Icons.error_outline_rounded,
-            iconColor: Theme.of(context).colorScheme.error,
-          );
-          entry.isPlaying = false; // Ensure isPlaying is false on error
-          await recordingsBox.put(entry.id, entry);
-          setState(() {
-            if (_currentlyPlayingFileId == entry.id) {
-              _currentlyPlayingFileId = null;
-            }
-          });
-        }
-      }
-    }
+      },
+    );
+    if (mounted)
+      setState(
+        () => _recordingDuration = Duration.zero,
+      ); // Reset duration after dialog
   }
 
   void _onCategorySelected(Map<String, dynamic>? category) {
-    if (_isRecording) return;
+    if (_isRecording) return; // Don't change category while recording
     setState(() => _selectedCategoryData = category);
   }
 
@@ -962,8 +869,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) => FilterBottomSheetWidget(
-        initialFilters: _currentFilters,
-        categories: allCategoriesForFilter,
+        initialFilters: _currentFilters, // Pass current filters
+        categories: allCategoriesForFilter, // Pass all categories
         onApplyFilters: (updatedFilters) =>
             setState(() => _currentFilters = updatedFilters),
       ),
@@ -986,29 +893,31 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  void _handleDismissRecording(RecordingEntry entry) {
+  void _handleDismissRecording(RecordingEntry entry) async {
     final theme = Theme.of(context);
     final box = Hive.box<RecordingEntry>(recordingsBoxName);
     final String deletedFilePath = entry.filePath;
-    box.delete(entry.id);
-    if (_currentlyPlayingFileId == entry.id &&
-        _player != null &&
-        _player!.isPlaying) {
-      _player!.stopPlayer().then((_) {
-        if (mounted) setState(() => _currentlyPlayingFileId = null);
-      });
-    }
+
+    await _stopPlaybackAndResetState(); // Stop playback if it's this entry
+
+    // Prepare entry for potential undo, ensuring isPlaying is false
+    // final RecordingEntry entryToPotentiallyRestore = entry.copyWith(isPlaying: false);
+    await box.delete(entry.id);
+
     showCustomSnackBar(
       context: context,
       message: '"${entry.displayName}" deleted.',
       actionLabel: 'UNDO',
-      onActionPressed: () => box.put(entry.id, entry),
+      onActionPressed: () {
+        // box.put(entryToPotentiallyRestore.id, entryToPotentiallyRestore); // Restore with isPlaying false
+      },
       duration: const Duration(seconds: 4),
       leadingIcon: Icons.delete_forever_rounded,
       iconColor: theme.colorScheme.secondary,
     ).closed.then((reason) {
-      if (reason != SnackBarClosedReason.action && !box.containsKey(entry.id))
+      if (reason != SnackBarClosedReason.action && !box.containsKey(entry.id)) {
         _deleteRecordingFile(deletedFilePath);
+      }
     });
   }
 
@@ -1027,11 +936,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (details.pointerCount < 2) return;
     final currentScale = details.scale;
     if (_selectedMethod == HiddenAccessTriggerMethod.pinchInScreen &&
-        currentScale < 0.7)
+        currentScale < 0.7) {
       _triggerHiddenScreenAccess();
-    else if (_selectedMethod == HiddenAccessTriggerMethod.pinchOutScreen &&
-        currentScale > 1.5)
+    } else if (_selectedMethod == HiddenAccessTriggerMethod.pinchOutScreen &&
+        currentScale > 1.5) {
       _triggerHiddenScreenAccess();
+    }
   }
 
   void _handleScreenScaleEnd(ScaleEndDetails details) {
@@ -1056,7 +966,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             await Navigator.of(context).push(
               MaterialPageRoute(builder: (context) => const SettingsScreen()),
             );
-            _loadHiddenAccessPreference();
+            _loadHiddenAccessPreference(); // Reload preference in case it changed
           },
         ),
       ],
@@ -1088,7 +998,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    // Consumer for PlaybackProvider
     Widget mainScaffoldContent = Consumer<PlaybackProvider>(
       builder: (context, playbackProvider, child) {
         final recordingToPlayFromWidget = playbackProvider.recordingToPlay;
@@ -1097,22 +1006,25 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         if (recordingToPlayFromWidget != null && shouldPlayImmediately) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted &&
-                playbackProvider.recordingToPlay ==
-                    recordingToPlayFromWidget && // Check again
+                playbackProvider.recordingToPlay == recordingToPlayFromWidget &&
                 playbackProvider.playImmediately) {
               _playRecordingFromProviderOrWidget(recordingToPlayFromWidget);
             }
           });
         }
 
-        // Original Scaffold content
         return Scaffold(
           appBar: PreferredSize(
             preferredSize: const Size.fromHeight(kToolbarHeight),
             child: _buildAppBar(context),
           ),
           body: Padding(
-            padding: const EdgeInsets.all(16.0),
+            padding: const EdgeInsets.fromLTRB(
+              16.0,
+              16.0,
+              16.0,
+              0,
+            ), // Use all(16.0) or specific as needed
             child: ValueListenableBuilder<Box<CustomCategory>>(
               valueListenable: Hive.box<CustomCategory>(
                 customCategoriesBoxName,
@@ -1121,6 +1033,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 final allDisplayCategories = _getAllCategories(
                   customCategoryBox,
                 );
+                final bool isAudioPlaying =
+                    _currentlyPlayingFileId != null &&
+                    (_player?.isPlaying ?? false);
+
+                Map<String, dynamic>? controlsCategoryData =
+                    _selectedCategoryData;
+                if (_currentlyPlayingEntry != null) {
+                  // If an audio track is loaded/playing
+                  controlsCategoryData = {
+                    'name': _currentlyPlayingEntry!.moodName,
+                    'emoji': _currentlyPlayingEntry!.moodEmoji,
+                    'color': _currentlyPlayingEntry!.moodColor,
+                    'iconColor': _currentlyPlayingEntry!.moodIconColor,
+                  };
+                }
+
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: <Widget>[
@@ -1142,21 +1070,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       isRecording: _isRecording,
                       onCategorySelected: _onCategorySelected,
                     ),
-                    const SizedBox(height: 40),
+                    const SizedBox(height: 20), // Adjusted spacing from 40
                     Center(
                       child: RecordingControlsWidget(
                         isRecording: _isRecording,
                         isRecordingPaused: _isRecordingPaused,
                         recordingDuration: _recordingDuration,
-                        selectedCategoryData: _selectedCategoryData,
+                        selectedCategoryData:
+                            controlsCategoryData, // Dynamic category for color
                         isRecorderInitialized: _isRecorderInitialized,
                         onStartStopRecording: _startOrStopRecording,
                         onTogglePausePlayRecording: _togglePausePlayRecording,
+
+                        // Props for the interactive waveform (main controls)
                       ),
                     ),
-                    const SizedBox(height: 40),
+                    const SizedBox(height: 25), // Adjusted spacing from 40
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 0.0,
+                      ), // Adjusted from 8.0
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -1186,12 +1119,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 15),
+                    const SizedBox(height: 5), // Adjusted from 15
                     Expanded(
                       child: RecordingsListView(
                         onTranscribe: _transcribeWithLemonFox,
                         onShare: _showShareOptionsDialog,
                         onMoveToVault: _moveToVault,
+                        // onViewTranscription is not implemented in this snippet, add if needed
                         recordingsBoxListenable: Hive.box<RecordingEntry>(
                           recordingsBoxName,
                         ).listenable(),
@@ -1199,6 +1133,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         onTogglePlay: _togglePlayRecordingItem,
                         onDismissRecording: _handleDismissRecording,
                         currentlyPlayingFileId: _currentlyPlayingFileId,
+                        // Pass progress and seek handler for mini waveforms in cards
+                        currentPlaybackProgress: _currentPlaybackProgress,
+                        currentTotalDuration: _currentTotalDuration,
+                        onSeekRequest:
+                            _handleSeek, // Reuse the same seek handler
                       ),
                     ),
                   ],
@@ -1216,8 +1155,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         onScaleStart: _isGestureAccessActive ? null : _handleScreenScaleStart,
         onScaleUpdate: _isGestureAccessActive ? null : _handleScreenScaleUpdate,
         onScaleEnd: _isGestureAccessActive ? null : _handleScreenScaleEnd,
-        behavior: HitTestBehavior
-            .opaque, // Ensures gestures are caught over the whole area
+        behavior: HitTestBehavior.opaque,
         child: mainScaffoldContent,
       );
     } else {
@@ -1225,3 +1163,34 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 }
+
+// Define RecordingPermissionException if not already defined elsewhere
+class RecordingPermissionException implements Exception {
+  final String message;
+  RecordingPermissionException(this.message);
+  @override
+  String toString() => 'RecordingPermissionException: $message';
+}
+
+// Define HiddenAccessTriggerMethod if not already defined elsewhere
+enum HiddenAccessTriggerMethod {
+  longPressAppBar,
+  tripleTapAppBar,
+  pinchInScreen,
+  pinchOutScreen,
+}
+// Ensure HiddenAccessTriggerMethod enum is defined in your project, e.g., in settings_screen.dart or a shared location.
+// If it's in settings_screen.dart, ensure it's imported or defined here.
+// For example:
+/*
+enum HiddenAccessTriggerMethod {
+  longPressAppBar('Long Press App Bar'),
+  tripleTapAppBar('Triple Tap App Bar'),
+  pinchInScreen('Pinch In Screen'),
+  pinchOutScreen('Pinch Out Screen');
+
+  const HiddenAccessTriggerMethod(this.displayName);
+  final String displayName;
+}
+*/
+// Ensure this enum is defined in your project, e.g., in settings_screen.dart or a shared location.

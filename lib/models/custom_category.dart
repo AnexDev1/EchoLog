@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 part 'custom_category.g.dart'; // Hive generator will create this
 
 @HiveType(
-  typeId: 2,
+  typeId: 28,
 ) // Ensure typeId is unique (0 for RecordingEntry, 1 for ColorAdapter)
 class CustomCategory extends HiveObject {
   @HiveField(0)

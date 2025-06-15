@@ -8,7 +8,7 @@ part of 'custom_category.dart';
 
 class CustomCategoryAdapter extends TypeAdapter<CustomCategory> {
   @override
-  final int typeId = 2;
+  final int typeId = 28;
 
   @override
   CustomCategory read(BinaryReader reader) {
