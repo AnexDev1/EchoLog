@@ -1,0 +1,8 @@
+<!-- filepath: android/app/src/main/res/values/strings.xml -->
+<resources>
+    <string name="app_name">echolog</string>
+    <!-- Add this line -->
+    <string name="quick_record_widget_description">Start a new recording quickly.</string>
+    <string name="recent_recording_widget_description">View your most recent recording.</string>
+    <!-- ... other strings ... -->
+</resources>

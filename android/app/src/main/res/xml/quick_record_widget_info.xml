@@ -1,0 +1,11 @@
+<!-- filepath: android/app/src/main/res/xml/quick_record_widget_info.xml -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="80dp"
+    android:minHeight="80dp"
+    android:updatePeriodMillis="0" 
+    android:previewLayout="@layout/quick_record_widget_layout"
+    android:initialLayout="@layout/quick_record_widget_layout"
+    android:description="@string/quick_record_widget_description"
+    android:widgetCategory="home_screen"
+    android:resizeMode="none">
+</appwidget-provider>

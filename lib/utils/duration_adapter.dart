@@ -2,7 +2,7 @@ import 'package:hive/hive.dart';
 
 class DurationAdapter extends TypeAdapter<Duration> {
   @override
-  final int typeId = 100; // IMPORTANT: Choose a unique typeId not used by other adapters in your project.
+  final int typeId = 200; // IMPORTANT: Choose a unique typeId not used by other adapters in your project.
 
   @override
   Duration read(BinaryReader reader) {
