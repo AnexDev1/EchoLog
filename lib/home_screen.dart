@@ -96,8 +96,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String? _currentlyPlayingFileId;
   RecordingEntry?
   _currentlyPlayingEntry; // To access waveform points and mood color
-  List<double>?
-  _activeWaveformPoints; // For the main RecordingControlsWidget waveform
+  // For the main RecordingControlsWidget waveform
   Duration _currentPlaybackProgress = Duration.zero;
   Duration _currentTotalDuration = Duration.zero;
   StreamSubscription? _playerSubscription;
@@ -199,30 +198,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _stopPlaybackAndResetState() async {
-    if (_player != null && (_player!.isPlaying || _player!.isPaused)) {
-      await _player!.stopPlayer();
-    }
-    if (mounted) {
-      final String? oldPlayingId = _currentlyPlayingFileId;
-      setState(() {
-        _currentlyPlayingFileId = null;
-        _currentlyPlayingEntry = null;
-        _activeWaveformPoints = null;
-        _currentPlaybackProgress = Duration.zero;
-        _currentTotalDuration = Duration.zero;
-      });
-      if (oldPlayingId != null) {
-        final box = Hive.box<RecordingEntry>(recordingsBoxName);
-        final entry = box.get(oldPlayingId);
-        if (entry != null && entry.isPlaying) {
-          entry.isPlaying = false;
-          await box.put(oldPlayingId, entry);
-        }
-      }
-    }
-  }
-
   Future<void> _handleSeek(double seekPercent) async {
     if (_player != null &&
         _isPlayerInitialized &&
@@ -241,17 +216,66 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _playRecordingFromProviderOrWidget(RecordingEntry entry) async {
-    await _togglePlayRecordingItem(entry, []); // Reuse common logic
+    await _togglePlayRecordingItem(entry, [
+      entry,
+    ]); // Reuse common logic, pass entry as a single-item list
     // Ensure playback provider request is cleared if it was the source
     Provider.of<PlaybackProvider>(
       context,
       listen: false,
     ).clearPlaybackRequest();
   }
+  // ...existing code...
+
+  Future<void> _stopPlaybackAndResetState() async {
+    final String? oldPlayingFileId =
+        _currentlyPlayingFileId; // Capture before reset
+
+    if (_player != null && (_player!.isPlaying || _player!.isPaused)) {
+      try {
+        await _player!.stopPlayer();
+      } catch (e) {
+        print("[HomeScreen] Error stopping player: $e");
+        // Potentially show a snackbar or handle error
+      }
+    }
+
+    // If a track was active, update its isPlaying status in Hive
+    if (oldPlayingFileId != null) {
+      final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
+      final entryToUpdate = recordingsBox.get(oldPlayingFileId);
+      if (entryToUpdate != null) {
+        if (entryToUpdate.isPlaying) {
+          // Only update if it was marked as playing
+          entryToUpdate.isPlaying = false;
+          // Use try-catch for Hive operations if they can fail
+          try {
+            await recordingsBox.put(oldPlayingFileId, entryToUpdate);
+          } catch (hiveError) {
+            print(
+              "[HomeScreen] Error updating entry in Hive during stop: $hiveError",
+            );
+          }
+        }
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _currentlyPlayingFileId = null;
+        _currentlyPlayingEntry =
+            null; // This will ensure cards reflect not playing
+        // _currentTotalDuration = Duration.zero; // Optional: reset or keep last known
+        _currentPlaybackProgress = Duration.zero;
+        // Any other UI state related to playback progress should be reset here
+      });
+    }
+  }
 
   Future<void> _togglePlayRecordingItem(
     RecordingEntry entry,
-    List<RecordingEntry> currentList,
+    List<RecordingEntry>
+    currentList, // This parameter might be used for context or future features
   ) async {
     if (!_isPlayerInitialized || _player == null) {
       showCustomSnackBar(
@@ -262,66 +286,135 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return;
     }
 
-    final bool wasPlayingThisEntry =
-        _currentlyPlayingFileId == entry.id && (_player?.isPlaying ?? false);
+    final String entryId = entry.id;
+    final bool isTargetEntryCurrentlyPlaying =
+        _currentlyPlayingFileId == entryId && _player!.isPlaying;
+    final bool isTargetEntryCurrentlyPaused =
+        _currentlyPlayingFileId == entryId && _player!.isPaused;
 
-    await _stopPlaybackAndResetState(); // Stop any current playback and reset state
+    final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
 
-    if (wasPlayingThisEntry) {
-      // If it was this entry, we just stopped it. State is reset.
-      return;
-    }
+    if (isTargetEntryCurrentlyPlaying) {
+      // --- CASE 1: Target entry is PLAYING -> PAUSE it ---
+      try {
+        await _player!.pausePlayer();
+        // Update the entry's state for persistence and local model consistency
+        // The RecordingCard's isPlaying prop should primarily rely on _player.isPlaying
+        final entryInBox = recordingsBox.get(entryId);
+        if (entryInBox != null) {
+          entryInBox.isPlaying = false;
+          await recordingsBox.put(entryId, entryInBox);
+        }
+        if (_currentlyPlayingEntry?.id == entryId) {
+          _currentlyPlayingEntry?.isPlaying = false;
+        }
 
-    // Start playing the selected entry
-    final file = File(entry.filePath);
-    if (!await file.exists()) {
-      print(
-        "[HomeScreen] Error: File does not exist at path: ${entry.filePath}",
-      );
-      showCustomSnackBar(
-        context: context,
-        message: 'Error: Recording file not found.',
-        leadingIcon: Icons.error_outline_rounded,
-        iconColor: Theme.of(context).colorScheme.error,
-      );
-      return;
-    }
-
-    try {
-      await _player!.startPlayer(
-        fromURI: entry.filePath,
-        codec: Codec.aacADTS,
-        whenFinished: () {
-          _stopPlaybackAndResetState(); // Reset state when playback finishes naturally
-        },
-      );
-
-      final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
-      entry.isPlaying = true; // Update the passed entry instance
-      await recordingsBox.put(entry.id, entry); // Save updated entry to Hive
-
-      if (mounted) {
-        setState(() {
-          _currentlyPlayingFileId = entry.id;
-          _currentlyPlayingEntry = entry;
-          _activeWaveformPoints = entry.waveformPoints ?? [];
-          _currentTotalDuration =
-              entry.duration; // Initial total duration from entry
-          _currentPlaybackProgress = Duration.zero;
-        });
+        if (mounted) {
+          setState(() {
+            // UI will update because the card's isPlaying prop will change
+            // (derived from _player.isPlaying)
+          });
+        }
+      } catch (e) {
+        print("[HomeScreen] Error pausing player: $e");
+        await _stopPlaybackAndResetState(); // Fallback to stop on error
       }
-    } catch (e) {
-      print("[HomeScreen] Error playing recording item: $e");
-      showCustomSnackBar(
-        context: context,
-        message: 'Error playing recording.',
-        leadingIcon: Icons.error_outline_rounded,
-        iconColor: Theme.of(context).colorScheme.error,
-      );
-      await _stopPlaybackAndResetState(); // Ensure state is reset on error
+    } else if (isTargetEntryCurrentlyPaused) {
+      // --- CASE 2: Target entry is PAUSED -> RESUME it ---
+      try {
+        await _player!.resumePlayer();
+        final entryInBox = recordingsBox.get(entryId);
+        if (entryInBox != null) {
+          entryInBox.isPlaying = true;
+          await recordingsBox.put(entryId, entryInBox);
+        }
+        if (_currentlyPlayingEntry?.id == entryId) {
+          _currentlyPlayingEntry?.isPlaying = true;
+        }
+
+        if (mounted) {
+          setState(() {
+            // UI will update
+          });
+        }
+      } catch (e) {
+        print("[HomeScreen] Error resuming player: $e");
+        await _stopPlaybackAndResetState(); // Fallback to stop on error
+      }
+    } else {
+      // --- CASE 3: Play NEW entry (or different entry was active) ---
+      // Stop any previous playback and reset its state first
+      if (_currentlyPlayingFileId != null ||
+          _player!.isPlaying ||
+          _player!.isPaused) {
+        await _stopPlaybackAndResetState();
+      }
+
+      final file = File(entry.filePath);
+      if (!await file.exists()) {
+        print(
+          "[HomeScreen] Error: File does not exist at path: ${entry.filePath}",
+        );
+        showCustomSnackBar(
+          context: context,
+          message: 'Error: Recording file not found.',
+          leadingIcon: Icons.error_outline_rounded,
+          iconColor: Theme.of(context).colorScheme.error,
+        );
+        return;
+      }
+
+      try {
+        await _player!.startPlayer(
+          fromURI: entry.filePath,
+          codec: Codec.aacADTS, // Ensure this codec is correct for your files
+          whenFinished: () {
+            // This callback is crucial. Ensure it only acts if this specific track finished.
+            if (_currentlyPlayingFileId == entryId) {
+              _stopPlaybackAndResetState();
+            }
+          },
+        );
+
+        // Update state for the new playing entry
+        final entryInBox = recordingsBox.get(entryId);
+        if (entryInBox != null) {
+          entryInBox.isPlaying = true;
+          await recordingsBox.put(entryId, entryInBox);
+          // Update _currentlyPlayingEntry to the instance from the box or the passed entry
+          // It's often better to use the instance from the box if available
+          _currentlyPlayingEntry = entryInBox;
+        } else {
+          // Fallback if not in box for some reason, use the passed entry
+          entry.isPlaying = true;
+          // Consider if you need to add it to the box here if it's missing
+          _currentlyPlayingEntry = entry;
+        }
+
+        if (mounted) {
+          setState(() {
+            _currentlyPlayingFileId = entryId;
+            // _currentlyPlayingEntry is already set above
+            _currentTotalDuration =
+                _currentlyPlayingEntry?.duration ?? Duration.zero;
+            _currentPlaybackProgress =
+                Duration.zero; // Reset progress for new track
+          });
+        }
+      } catch (e) {
+        print("[HomeScreen] Error playing recording item: $e");
+        showCustomSnackBar(
+          context: context,
+          message: 'Error playing recording.',
+          leadingIcon: Icons.error_outline_rounded,
+          iconColor: Theme.of(context).colorScheme.error,
+        );
+        await _stopPlaybackAndResetState(); // Ensure state is reset on error
+      }
     }
   }
 
+  // ...rest of your HomeScreen code...
   Future<void> _shareRecordingFile(RecordingEntry entry) async {
     await _stopPlaybackAndResetState(); // Stop playback before sharing
     if (entry.filePath.isEmpty) {
@@ -1179,18 +1272,3 @@ enum HiddenAccessTriggerMethod {
   pinchInScreen,
   pinchOutScreen,
 }
-// Ensure HiddenAccessTriggerMethod enum is defined in your project, e.g., in settings_screen.dart or a shared location.
-// If it's in settings_screen.dart, ensure it's imported or defined here.
-// For example:
-/*
-enum HiddenAccessTriggerMethod {
-  longPressAppBar('Long Press App Bar'),
-  tripleTapAppBar('Triple Tap App Bar'),
-  pinchInScreen('Pinch In Screen'),
-  pinchOutScreen('Pinch Out Screen');
-
-  const HiddenAccessTriggerMethod(this.displayName);
-  final String displayName;
-}
-*/
-// Ensure this enum is defined in your project, e.g., in settings_screen.dart or a shared location.

@@ -7,7 +7,7 @@ import 'package:echolog/models/recording_entry.dart';
 import 'package:echolog/widgets/mini_waveform_painter.dart';
 import 'package:echolog/widgets/animated_waveform_play_button.dart';
 
-class RecordingCard extends StatelessWidget {
+class RecordingCard extends StatefulWidget {
   final RecordingEntry recording;
   final VoidCallback onPlayToggle;
   final VoidCallback? onEdit;
@@ -16,16 +16,15 @@ class RecordingCard extends StatelessWidget {
   final VoidCallback? onTranscribe;
   final VoidCallback? onMoveToVault;
   final VoidCallback? onViewTranscription;
-  final bool isPlaying;
-  final bool isSelected; // For multi-select or highlighting
-  final VoidCallback? onSelect; // For multi-select
-  final VoidCallback? onLongPress; // For multi-select or context menu
-
-  // For seek functionality on the mini waveform within this card
-  final double
-  playbackProgressPercent; // Current playback progress (0.0 to 1.0) for this specific recording
-  final Function(double)?
-  onSeekRequest; // Callback when user interacts with waveform to seek (passes percentage)
+  final bool isPlaying; // True if actively playing, FALSE IF PAUSED OR STOPPED
+  final bool isSelected;
+  final VoidCallback? onSelect;
+  final VoidCallback? onLongPress;
+  // IMPORTANT: This value MUST be maintained by the parent (HomeScreen)
+  // when the audio is PAUSED. It should NOT be reset to 0.0 on pause.
+  // It should only be 0.0 when playback is fully stopped or at the very beginning.
+  final double playbackProgressPercent;
+  final Function(double)? onSeekRequest;
 
   const RecordingCard({
     super.key,
@@ -37,13 +36,20 @@ class RecordingCard extends StatelessWidget {
     this.onTranscribe,
     this.onMoveToVault,
     this.onViewTranscription,
-    required this.isPlaying,
+    required this.isPlaying, // This tells the button its icon (play/pause)
     this.isSelected = false,
     this.onSelect,
     this.onLongPress,
-    this.playbackProgressPercent = 0.0, // Default to 0% progress
+    this.playbackProgressPercent = 0.0, // Default if not provided
     this.onSeekRequest,
   });
+
+  @override
+  State<RecordingCard> createState() => _RecordingCardState();
+}
+
+class _RecordingCardState extends State<RecordingCard> {
+  bool _isTranscriptionExpanded = false;
 
   String _formatDuration(Duration duration) {
     String twoDigits(int n) => n.toString().padLeft(2, "0");
@@ -62,55 +68,98 @@ class RecordingCard extends StatelessWidget {
     final DateFormat dateFormat = DateFormat('MMM d, yyyy');
     final DateFormat timeFormat = DateFormat('h:mm a');
 
-    // Use actual waveform points if available, otherwise generate placeholder
     final List<double> waveformData =
-        recording.waveformPoints ??
+        widget.recording.waveformPoints ??
         List.generate(
-          50, // Number of points for placeholder
+          50,
           (index) =>
               (math.sin(index * 0.3 + math.Random().nextDouble() * 0.5) + 1) /
                   2.2 +
               0.05,
-        ).map((e) => e.clamp(0.05, 1.0)).toList(); // Ensure values are clamped
+        ).map((e) => e.clamp(0.05, 1.0)).toList();
 
-    final String? summaryPreview = recording.summaryPreview;
-    final String? transcription = recording.transcription;
+    final String? summaryPreview = widget.recording.summaryPreview;
+    final String? fullTranscription = widget.recording.transcription;
     final bool hasFullTranscription =
-        transcription != null && transcription.isNotEmpty;
+        fullTranscription != null && fullTranscription.isNotEmpty;
+    final bool hasSummary = summaryPreview != null && summaryPreview.isNotEmpty;
 
-    // Define colors for the mini waveform based on mood color
-    final Color baseWaveColor = recording.moodColor.withOpacity(
-      0.65,
-    ); // For unplayed part
-    final Color progressWaveColor =
-        recording.moodColor; // Solid mood color for played part
-    // Slightly darker or modified mood color for the thumb for better visibility
-    final Color thumbWaveColor = HSLColor.fromColor(recording.moodColor)
+    String transcriptionTextToShow;
+    bool canExpand = false;
+    const int collapsedPreviewMaxLines = 2;
+    const int collapsedPreviewLength = 120;
+
+    if (hasFullTranscription) {
+      if (_isTranscriptionExpanded) {
+        transcriptionTextToShow = fullTranscription;
+      } else {
+        if (hasSummary) {
+          transcriptionTextToShow = summaryPreview;
+        } else {
+          transcriptionTextToShow =
+              fullTranscription.length > collapsedPreviewLength
+              ? '${fullTranscription.substring(0, collapsedPreviewLength)}...'
+              : fullTranscription;
+        }
+      }
+      if (fullTranscription.length > transcriptionTextToShow.length ||
+          (hasSummary && fullTranscription != summaryPreview) ||
+          _isTranscriptionExpanded) {
+        canExpand = true;
+      }
+    } else if (hasSummary) {
+      transcriptionTextToShow = summaryPreview;
+      canExpand = false;
+    } else {
+      transcriptionTextToShow = "";
+      canExpand = false;
+    }
+
+    final Color baseWaveColor = widget.recording.moodColor.withOpacity(0.65);
+    final Color progressWaveColor = widget.recording.moodColor;
+    final Color thumbWaveColor = HSLColor.fromColor(widget.recording.moodColor)
         .withLightness(
-          (HSLColor.fromColor(recording.moodColor).lightness - 0.1).clamp(
-            0.0,
-            1.0,
-          ),
+          (HSLColor.fromColor(widget.recording.moodColor).lightness - 0.1)
+              .clamp(0.0, 1.0),
         )
         .toColor();
 
+    Duration elapsedDuration = Duration.zero;
+    // Calculate elapsed duration if there's any progress (playing OR PAUSED)
+    if (widget.playbackProgressPercent > 0) {
+      final totalMilliseconds = widget.recording.duration.inMilliseconds;
+      final elapsedMilliseconds =
+          (totalMilliseconds * widget.playbackProgressPercent).round();
+      elapsedDuration = Duration(milliseconds: elapsedMilliseconds);
+    }
+
+    String durationToDisplay;
+    // If there's progress (widget.playbackProgressPercent > 0), it means the track
+    // has been played at least some amount and could be currently playing OR PAUSED.
+    // In this case, show "elapsed / total".
+    // Otherwise (stopped/not started, widget.playbackProgressPercent is 0), show total duration.
+    if (widget.playbackProgressPercent > 0) {
+      durationToDisplay =
+          '${_formatDuration(elapsedDuration)} / ${_formatDuration(widget.recording.duration)}';
+    } else {
+      durationToDisplay = _formatDuration(widget.recording.duration);
+    }
+
     return Card(
-      elevation: isSelected ? 6.0 : 2.0,
+      elevation: widget.isSelected ? 6.0 : 2.0,
       margin: const EdgeInsets.symmetric(horizontal: 0.0, vertical: 6.0),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12.0),
-        side: isSelected
-            ? BorderSide(color: recording.moodColor, width: 1.8)
+        side: widget.isSelected
+            ? BorderSide(color: widget.recording.moodColor, width: 1.8)
             : BorderSide(
                 color: theme.dividerColor.withOpacity(0.2),
                 width: 0.8,
               ),
       ),
       child: InkWell(
-        onTap:
-            onSelect ??
-            onPlayToggle, // If onSelect is provided, it takes precedence
-        onLongPress: onLongPress,
+        onTap: widget.onSelect ?? widget.onPlayToggle,
+        onLongPress: widget.onLongPress,
         borderRadius: BorderRadius.circular(12.0),
         child: Padding(
           padding: const EdgeInsets.all(12.0),
@@ -122,7 +171,7 @@ class RecordingCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      recording.displayName,
+                      widget.recording.displayName,
                       style: GoogleFonts.poppins(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -133,8 +182,8 @@ class RecordingCard extends StatelessWidget {
                     ),
                   ),
                   SizedBox(
-                    width: 36, // Increased touch target
-                    height: 36, // Increased touch target
+                    width: 36,
+                    height: 36,
                     child: PopupMenuButton<String>(
                       icon: Icon(
                         Icons.more_vert,
@@ -144,20 +193,31 @@ class RecordingCard extends StatelessWidget {
                       padding: EdgeInsets.zero,
                       tooltip: "More options",
                       onSelected: (value) {
-                        if (value == 'edit' && onEdit != null) onEdit!();
-                        if (value == 'delete' && onDelete != null) onDelete!();
-                        if (value == 'share' && onShare != null) onShare!();
-                        if (value == 'transcribe' && onTranscribe != null)
-                          onTranscribe!();
-                        if (value == 'move_to_vault' && onMoveToVault != null)
-                          onMoveToVault!();
+                        if (value == 'edit' && widget.onEdit != null) {
+                          widget.onEdit!();
+                        }
+                        if (value == 'delete' && widget.onDelete != null) {
+                          widget.onDelete!();
+                        }
+                        if (value == 'share' && widget.onShare != null) {
+                          widget.onShare!();
+                        }
+                        if (value == 'transcribe' &&
+                            widget.onTranscribe != null) {
+                          widget.onTranscribe!();
+                        }
+                        if (value == 'move_to_vault' &&
+                            widget.onMoveToVault != null) {
+                          widget.onMoveToVault!();
+                        }
                         if (value == 'view_transcription' &&
-                            onViewTranscription != null)
-                          onViewTranscription!();
+                            widget.onViewTranscription != null) {
+                          widget.onViewTranscription!();
+                        }
                       },
                       itemBuilder: (BuildContext context) =>
                           <PopupMenuEntry<String>>[
-                            if (onEdit != null)
+                            if (widget.onEdit != null)
                               const PopupMenuItem<String>(
                                 value: 'edit',
                                 child: Row(
@@ -168,7 +228,7 @@ class RecordingCard extends StatelessWidget {
                                   ],
                                 ),
                               ),
-                            if (onShare != null)
+                            if (widget.onShare != null)
                               const PopupMenuItem<String>(
                                 value: 'share',
                                 child: Row(
@@ -179,7 +239,8 @@ class RecordingCard extends StatelessWidget {
                                   ],
                                 ),
                               ),
-                            if (onTranscribe != null && !hasFullTranscription)
+                            if (widget.onTranscribe != null &&
+                                !hasFullTranscription)
                               const PopupMenuItem<String>(
                                 value: 'transcribe',
                                 child: Row(
@@ -191,7 +252,8 @@ class RecordingCard extends StatelessWidget {
                                 ),
                               ),
                             if (hasFullTranscription &&
-                                onViewTranscription != null)
+                                widget.onViewTranscription != null &&
+                                !canExpand)
                               const PopupMenuItem<String>(
                                 value: 'view_transcription',
                                 child: Row(
@@ -202,7 +264,7 @@ class RecordingCard extends StatelessWidget {
                                   ],
                                 ),
                               ),
-                            if (onMoveToVault != null)
+                            if (widget.onMoveToVault != null)
                               const PopupMenuItem<String>(
                                 value: 'move_to_vault',
                                 child: Row(
@@ -213,7 +275,7 @@ class RecordingCard extends StatelessWidget {
                                   ],
                                 ),
                               ),
-                            if (onDelete != null)
+                            if (widget.onDelete != null)
                               const PopupMenuItem<String>(
                                 value: 'delete',
                                 child: Row(
@@ -238,46 +300,51 @@ class RecordingCard extends StatelessWidget {
               ),
               const SizedBox(height: 4),
 
-              if (summaryPreview != null && summaryPreview.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6.0, top: 2.0),
-                  child: Text(
-                    summaryPreview,
-                    style: GoogleFonts.poppins(
-                      fontSize: 12.5,
-                      color: theme.hintColor.withOpacity(0.9),
-                      fontStyle: FontStyle.italic,
+              if (transcriptionTextToShow.isNotEmpty)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4.0, top: 2.0),
+                      child: SelectableText(
+                        transcriptionTextToShow,
+                        style:
+                            GoogleFonts.poppins(
+                              fontSize: 12.5,
+                              color: _isTranscriptionExpanded
+                                  ? theme.colorScheme.onSurfaceVariant
+                                  : theme.hintColor.withOpacity(0.9),
+                              fontStyle: !_isTranscriptionExpanded && hasSummary
+                                  ? FontStyle.italic
+                                  : FontStyle.normal,
+                            ).copyWith(
+                              overflow: _isTranscriptionExpanded
+                                  ? TextOverflow.visible
+                                  : TextOverflow.ellipsis,
+                            ),
+                        maxLines: _isTranscriptionExpanded
+                            ? null
+                            : collapsedPreviewMaxLines,
+                        onTap: canExpand
+                            ? () {
+                                setState(() {
+                                  _isTranscriptionExpanded =
+                                      !_isTranscriptionExpanded;
+                                });
+                              }
+                            : null,
+                      ),
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  ],
                 )
-              else if (transcription != null &&
-                  transcription.isNotEmpty &&
-                  summaryPreview == null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6.0, top: 2.0),
-                  child: Text(
-                    transcription.length > 100
-                        ? '${transcription.substring(0, 100)}...'
-                        : transcription,
-                    style: GoogleFonts.poppins(
-                      fontSize: 12.5,
-                      color: theme.hintColor.withOpacity(0.8),
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
+              else
+                const SizedBox.shrink(),
 
-              // The interactive waveform display
               if (waveformData.isNotEmpty)
                 GestureDetector(
-                  behavior: HitTestBehavior
-                      .opaque, // Ensures taps are caught within the bounds
+                  behavior: HitTestBehavior.opaque,
                   onTapDown: (details) {
-                    // Allow seek only if this specific card's audio is playing
-                    if (onSeekRequest != null && isPlaying) {
+                    if (widget.onSeekRequest != null && widget.isPlaying) {
                       final RenderBox box =
                           context.findRenderObject() as RenderBox;
                       final localOffset = box.globalToLocal(
@@ -285,15 +352,14 @@ class RecordingCard extends StatelessWidget {
                       );
                       final seekPercent = (localOffset.dx / box.size.width)
                           .clamp(0.0, 1.0);
-                      onSeekRequest!(seekPercent);
-                    } else if (!isPlaying) {
-                      // If not playing, a tap on the waveform can also start playback
-                      onPlayToggle();
+                      widget.onSeekRequest!(seekPercent);
+                    } else if (!widget.isPlaying) {
+                      // If PAUSED or STOPPED
+                      widget.onPlayToggle(); // Parent handles resume or start
                     }
                   },
                   onHorizontalDragUpdate: (details) {
-                    // Allow seek only if this specific card's audio is playing
-                    if (onSeekRequest != null && isPlaying) {
+                    if (widget.onSeekRequest != null && widget.isPlaying) {
                       final RenderBox box =
                           context.findRenderObject() as RenderBox;
                       final localOffset = box.globalToLocal(
@@ -301,42 +367,36 @@ class RecordingCard extends StatelessWidget {
                       );
                       final seekPercent = (localOffset.dx / box.size.width)
                           .clamp(0.0, 1.0);
-                      onSeekRequest!(seekPercent);
+                      widget.onSeekRequest!(seekPercent);
                     }
                   },
                   child: Container(
-                    height: 30.0, // Height of the waveform display area
+                    height: 30.0,
                     margin: EdgeInsets.only(
-                      top:
-                          (summaryPreview != null &&
-                                  summaryPreview.isNotEmpty) ||
-                              (transcription != null &&
-                                  transcription.isNotEmpty)
-                          ? 6.0
-                          : 2.0,
+                      top: (transcriptionTextToShow.isNotEmpty) ? 6.0 : 2.0,
                       bottom: 8.0,
                     ),
-                    width: double.infinity, // Take full width
+                    width: double.infinity,
                     child: CustomPaint(
                       painter: MiniWaveformPainter(
                         waveformData: waveformData,
                         waveColor: baseWaveColor,
-                        strokeWidth:
-                            1.8, // Slightly thicker for better visibility
-                        // Pass progress only if this card is the one playing
-                        progressPercent: isPlaying
-                            ? playbackProgressPercent
-                            : 0.0,
+                        strokeWidth: 1.8,
+                        // CRITICAL: The painter uses the playbackProgressPercent
+                        // directly. If this value is correctly maintained by the
+                        // parent widget (HomeScreen) during pause (i.e., NOT reset
+                        // to 0.0), the dot will stay where it was paused.
+                        // If the dot disappears, it means widget.playbackProgressPercent
+                        // is becoming 0.0 when you pause, which is an issue in the
+                        // PARENT WIDGET'S state management.
+                        progressPercent: widget.playbackProgressPercent,
                         progressColor: progressWaveColor,
                         thumbColor: thumbWaveColor,
                       ),
                     ),
                   ),
                 ),
-              // Add a small spacer if no waveform and no text previews are shown
-              if (waveformData.isEmpty &&
-                  summaryPreview == null &&
-                  (transcription == null || transcription.isEmpty))
+              if (waveformData.isEmpty && transcriptionTextToShow.isEmpty)
                 const SizedBox(height: 6),
 
               Row(
@@ -347,14 +407,14 @@ class RecordingCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        dateFormat.format(recording.dateRecorded),
+                        dateFormat.format(widget.recording.dateRecorded),
                         style: GoogleFonts.poppins(
                           fontSize: 11.5,
                           color: theme.hintColor.withOpacity(0.85),
                         ),
                       ),
                       Text(
-                        timeFormat.format(recording.dateRecorded),
+                        timeFormat.format(widget.recording.dateRecorded),
                         style: GoogleFonts.poppins(
                           fontSize: 11.5,
                           color: theme.hintColor.withOpacity(0.85),
@@ -363,20 +423,23 @@ class RecordingCard extends StatelessWidget {
                     ],
                   ),
                   Text(
-                    _formatDuration(recording.duration),
+                    durationToDisplay, // This correctly shows elapsed/total if progress > 0
                     style: GoogleFonts.poppins(
                       fontSize: 13,
                       fontWeight: FontWeight.w500,
                       color: theme.colorScheme.onSurface.withOpacity(0.9),
                     ),
+                    textAlign: TextAlign.end,
                   ),
                   AnimatedWaveformPlayButton(
-                    isPlaying: isPlaying,
-                    onTap:
-                        onPlayToggle, // This button still primarily handles play/pause toggle
-                    activeColor: recording.moodColor,
+                    // isPlaying is true if actively playing, false if paused/stopped.
+                    // This controls the button's icon.
+                    isPlaying: widget.isPlaying,
+                    onTap: widget
+                        .onPlayToggle, // Parent handles actual play/pause/resume
+                    activeColor: widget.recording.moodColor,
                     inactiveColor: theme.hintColor.withOpacity(0.6),
-                    size: const Size(32, 32), // Slightly larger play button
+                    size: const Size(32, 32),
                   ),
                 ],
               ),

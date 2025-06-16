@@ -1,6 +1,6 @@
 // filepath: lib/models/custom_category.dart
-import 'package:hive/hive.dart';
 import 'package:flutter/material.dart';
+import 'package:hive/hive.dart';
 
 part 'custom_category.g.dart'; // Hive generator will create this
 
@@ -34,7 +34,7 @@ class CustomCategory extends HiveObject {
   Color get color => Color(colorValue);
   Color get iconColor => Color(iconColorValue);
 
-  // Helper to convert to the Map format used by widgets
+  // Helper to convert to the Map format used by widgets (can be kept if used elsewhere)
   Map<String, dynamic> toMap() {
     return {
       'id': id, // Keep track if it's custom
@@ -44,5 +44,27 @@ class CustomCategory extends HiveObject {
       'iconColor': Color(iconColorValue),
       'isCustom': true,
     };
+  }
+
+  // Method to convert CustomCategory instance to a JSON map
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'emoji': emoji,
+      'colorValue': colorValue,
+      'iconColorValue': iconColorValue,
+    };
+  }
+
+  // Factory constructor to create a CustomCategory instance from a JSON map
+  factory CustomCategory.fromJson(Map<String, dynamic> json) {
+    return CustomCategory(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      emoji: json['emoji'] as String,
+      colorValue: json['colorValue'] as int,
+      iconColorValue: json['iconColorValue'] as int,
+    );
   }
 }

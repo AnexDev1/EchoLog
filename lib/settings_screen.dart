@@ -1,4 +1,5 @@
 // Ensure correct path
+import 'package:echolog/services/data_exporter_service.dart'; // Added for DataExporter
 import 'package:echolog/theme_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -25,6 +26,8 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   HiddenAccessTriggerMethod _selectedHiddenAccessMethod =
       HiddenAccessTriggerMethod.longPressAppBar;
+  bool _isExporting = false; // To manage loading state for export
+  bool _isImporting = false; // To manage loading state for import
 
   @override
   void initState() {
@@ -168,18 +171,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'Select Category Tag Style',
             style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
           ),
-          // This will automatically include 'glassmorphic' if it's in the CategoryTagStyle enum
           children: CategoryTagStyle.values.map((style) {
-            // Capitalize the first letter of the enum name for display
             String styleName = style.name.replaceFirstMapped(
               style.name[0],
               (match) => style.name[0].toUpperCase(),
             );
             return RadioListTile<CategoryTagStyle>(
-              title: Text(
-                styleName, // e.g., "Original", "Neumorphic", "Glassmorphic"
-                style: GoogleFonts.poppins(),
-              ),
+              title: Text(styleName, style: GoogleFonts.poppins()),
               value: style,
               groupValue: themeProvider.categoryTagStyle,
               onChanged: (CategoryTagStyle? value) {
@@ -201,6 +199,131 @@ class _SettingsScreenState extends State<SettingsScreen> {
         themeProvider.setCategoryTagStyle(selectedValue);
       }
     });
+  }
+
+  Future<void> _handleExportData() async {
+    if (_isExporting) return;
+
+    setState(() {
+      _isExporting = true;
+    });
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          content: Row(
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(width: 20),
+              Text("Exporting data...", style: GoogleFonts.poppins()),
+            ],
+          ),
+        );
+      },
+    );
+
+    final exporter = DataExporter();
+    String message = 'Export process initiated.';
+    bool success = false;
+    bool cancelled = false;
+
+    try {
+      await exporter.exportData();
+      message = 'Data export completed. Check your selected save location.';
+      success = true;
+    } catch (e) {
+      final eString = e.toString();
+      if (eString.contains('Export cancelled by user')) {
+        message = 'Export cancelled by user.';
+        cancelled = true;
+      } else {
+        message = 'Export failed: ${eString.replaceFirst("Exception: ", "")}';
+      }
+      success = false;
+    } finally {
+      if (mounted) {
+        Navigator.of(
+          context,
+          rootNavigator: true,
+        ).pop(); // Dismiss loading dialog
+        setState(() {
+          _isExporting = false;
+        });
+        if (!cancelled) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(message, style: GoogleFonts.poppins()),
+              backgroundColor: success ? Colors.green : Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _handleImportData() async {
+    if (_isImporting) return;
+
+    setState(() {
+      _isImporting = true;
+    });
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          content: Row(
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(width: 20),
+              Text("Importing data...", style: GoogleFonts.poppins()),
+            ],
+          ),
+        );
+      },
+    );
+
+    final exporter = DataExporter();
+    String message = 'Import process initiated.';
+    bool success = false; // Success here means the process completed,
+    // message will contain details.
+
+    try {
+      message = await exporter.importData();
+      // If importData returns 'Import cancelled...', it's not an error state for the SnackBar color
+      if (message.startsWith('Import cancelled')) {
+        success =
+            false; // Or treat as neutral, but red is okay for "didn't happen"
+      } else {
+        success = true; // Indicates the import process itself ran.
+      }
+    } catch (e) {
+      message =
+          'Import failed: ${e.toString().replaceFirst("Exception: ", "")}';
+      success = false;
+    } finally {
+      if (mounted) {
+        Navigator.of(
+          context,
+          rootNavigator: true,
+        ).pop(); // Dismiss loading dialog
+        setState(() {
+          _isImporting = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message, style: GoogleFonts.poppins()),
+            backgroundColor: success ? Colors.green : Colors.red,
+            duration: Duration(
+              seconds: message.length > 100 ? 6 : 4,
+            ), // Longer for detailed messages
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildSettingsSectionTitle(BuildContext context, String title) {
@@ -228,12 +351,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     String? subtitle,
     Widget? trailing,
     VoidCallback? onTap,
+    bool isLoading = false,
   }) {
     final theme = Theme.of(context);
     return Material(
       color: theme.cardTheme.color ?? theme.cardColor,
       child: ListTile(
-        leading: Icon(icon, color: theme.colorScheme.secondary),
+        leading: isLoading
+            ? SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.0,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    theme.colorScheme.secondary,
+                  ),
+                ),
+              )
+            : Icon(icon, color: theme.colorScheme.secondary),
         title: Text(title, style: GoogleFonts.poppins(fontSize: 16)),
         subtitle: subtitle != null
             ? Text(
@@ -244,10 +379,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               )
             : null,
-        trailing:
-            trailing ??
-            Icon(Icons.chevron_right, color: theme.hintColor.withOpacity(0.7)),
-        onTap: onTap,
+        trailing: isLoading
+            ? null
+            : trailing ??
+                  Icon(
+                    Icons.chevron_right,
+                    color: theme.hintColor.withOpacity(0.7),
+                  ),
+        onTap: isLoading ? null : onTap,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16.0,
           vertical: 8.0,
@@ -379,7 +518,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _buildSettingsItem(
                     icon: Icons.style_outlined,
                     title: 'Category Tag Style',
-                    // This will display the current style, e.g., "Glassmorphic"
                     subtitle: themeProvider.categoryTagStyle.name
                         .replaceFirstMapped(
                           themeProvider.categoryTagStyle.name[0],
@@ -391,6 +529,64 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         Provider.of<ThemeProvider>(context, listen: false),
                       );
                     },
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          _buildSettingsSectionTitle(context, 'DATA MANAGEMENT'),
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
+            decoration: BoxDecoration(
+              color: theme.cardTheme.color ?? theme.cardColor,
+              borderRadius: BorderRadius.circular(
+                theme.cardTheme.shape is RoundedRectangleBorder
+                    ? ((theme.cardTheme.shape as RoundedRectangleBorder)
+                                  .borderRadius
+                              as BorderRadius)
+                          .topLeft
+                          .x
+                    : 12.0,
+              ),
+              boxShadow:
+                  theme.cardTheme.elevation != null &&
+                      theme.cardTheme.elevation! > 0
+                  ? [
+                      BoxShadow(
+                        color: theme.shadowColor.withOpacity(0.1),
+                        blurRadius: theme.cardTheme.elevation! * 2,
+                        offset: Offset(0, theme.cardTheme.elevation!),
+                      ),
+                    ]
+                  : [],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(
+                theme.cardTheme.shape is RoundedRectangleBorder
+                    ? ((theme.cardTheme.shape as RoundedRectangleBorder)
+                                  .borderRadius
+                              as BorderRadius)
+                          .topLeft
+                          .x
+                    : 12.0,
+              ),
+              child: Column(
+                children: [
+                  _buildSettingsItem(
+                    icon: Icons.backup_outlined,
+                    title: 'Export Data',
+                    subtitle: 'Backup your recordings and settings',
+                    onTap: _handleExportData,
+                    isLoading: _isExporting,
+                  ),
+                  const Divider(height: 1, indent: 16, endIndent: 16),
+                  _buildSettingsItem(
+                    icon: Icons.cloud_download_outlined,
+                    title: 'Import Data',
+                    subtitle: 'Restore data from a backup file',
+                    onTap: _handleImportData,
+                    isLoading: _isImporting,
                   ),
                 ],
               ),

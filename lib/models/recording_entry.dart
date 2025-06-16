@@ -1,4 +1,3 @@
-import 'package:echolog/utils/color_adapter.dart';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 
@@ -63,42 +62,51 @@ class RecordingEntry extends HiveObject {
     this.isPlaying = false,
   });
 
-  // Optional: toMap and fromMap for other uses (e.g., debugging, other databases)
-  Map<String, dynamic> toMap() {
+  // Method to convert RecordingEntry instance to a JSON map
+  Map<String, dynamic> toJson() {
     return {
       'id': id,
-      'filePath': filePath,
+      'filePath':
+          filePath, // This path will be relative to the export package or an old path
       'displayName': displayName,
-      'duration': duration.inMilliseconds,
-      'dateRecorded': dateRecorded.toIso8601String(),
+      'duration': duration.inMilliseconds, // Store Duration as milliseconds
+      'dateRecorded': dateRecorded
+          .toIso8601String(), // Store DateTime as ISO8601 string
       'moodName': moodName,
-      'moodColor': moodColor.value, // Store as int
-      'moodIconColor': moodIconColor.value, // Store as int
+      'moodColor': moodColor.value, // Store Color as int
+      'moodIconColor': moodIconColor.value, // Store Color as int
       'moodEmoji': moodEmoji,
       'transcription': transcription,
       'waveformPoints': waveformPoints,
       'summaryPreview': summaryPreview,
-      'isPlaying': isPlaying,
+      'isPlaying':
+          isPlaying, // Consider if this should be exported or always default to false on import
     };
   }
 
-  factory RecordingEntry.fromMap(Map<String, dynamic> map) {
+  // Factory constructor to create a RecordingEntry instance from a JSON map
+  factory RecordingEntry.fromJson(Map<String, dynamic> json) {
     return RecordingEntry(
-      id: map['id'] as String,
-      filePath: map['filePath'] as String,
-      displayName: map['displayName'] as String,
-      duration: Duration(milliseconds: map['duration'] as int),
-      dateRecorded: DateTime.parse(map['dateRecorded'] as String),
-      moodName: map['moodName'] as String,
-      moodColor: Color(map['moodColor'] as int),
-      moodIconColor: Color(map['moodIconColor'] as int),
-      moodEmoji: map['moodEmoji'] as String,
-      transcription: map['transcription'] as String?,
-      waveformPoints: (map['waveformPoints'] as List<dynamic>?)
+      id: json['id'] as String,
+      filePath:
+          json['filePath']
+              as String, // This path will need to be updated during import
+      displayName: json['displayName'] as String,
+      duration: Duration(milliseconds: json['duration'] as int),
+      dateRecorded: DateTime.parse(json['dateRecorded'] as String),
+      moodName: json['moodName'] as String,
+      moodColor: Color(json['moodColor'] as int),
+      moodIconColor: Color(json['moodIconColor'] as int),
+      moodEmoji: json['moodEmoji'] as String,
+      transcription: json['transcription'] as String?,
+      waveformPoints: (json['waveformPoints'] as List<dynamic>?)
           ?.map((e) => (e as num).toDouble())
           .toList(),
-      summaryPreview: map['summaryPreview'] as String?,
-      isPlaying: map['isPlaying'] as bool? ?? false,
+      summaryPreview: json['summaryPreview'] as String?,
+      // isPlaying will default to false as per constructor if not in JSON,
+      // or use the value from JSON if present.
+      // It's often better to reset UI state like isPlaying on import.
+      isPlaying: json['isPlaying'] as bool? ?? false,
     );
   }
 }

@@ -18,12 +18,18 @@ class CategorySelectorWidget extends StatefulWidget {
   final Function(Map<String, dynamic>?) onCategorySelected;
   final bool isRecording;
 
+  // New properties for conditional vertical scrolling
+  final int maxItemsBeforeVerticalScroll;
+  final double scrollHeightWhenWrapped;
+
   const CategorySelectorWidget({
     super.key,
     required this.predefinedCategories,
     this.selectedCategoryData,
     required this.onCategorySelected,
     required this.isRecording,
+    this.maxItemsBeforeVerticalScroll = 8, // After 5 items, make it scrollable
+    this.scrollHeightWhenWrapped = 150.0, // Height of the scrollable area
   });
 
   @override
@@ -132,7 +138,7 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
             .toList();
         final allCategories = [...mappedPredefined, ...customCategories];
 
-        List<Widget> categoryWidgets = allCategories.map((category) {
+        List<Widget> allDisplayItems = allCategories.map((category) {
           final String categoryId = category['id'] as String;
           final bool isCustom = category['isCustom'] as bool? ?? false;
           final String? selectedIdentifier =
@@ -152,9 +158,9 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
               label: '$emojiString $categoryName',
               onTap: () {
                 if (widget.isRecording) return;
-                if (isEditingThis)
+                if (isEditingThis) {
                   _stopEditMode();
-                else {
+                } else {
                   _stopEditMode();
                   widget.onCategorySelected(category);
                 }
@@ -169,9 +175,9 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
               label: '$emojiString $categoryName',
               onTap: () {
                 if (widget.isRecording) return;
-                if (isEditingThis)
+                if (isEditingThis) {
                   _stopEditMode();
-                else {
+                } else {
                   _stopEditMode();
                   widget.onCategorySelected(category);
                 }
@@ -182,7 +188,6 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
                   : Colors.black.withOpacity(0.75),
             );
           } else {
-            // Original Style (CategoryTagStyle.original)
             Color currentContentColor =
                 category['iconColor'] as Color? ??
                 _getContrastingTextColor(categoryMainColor);
@@ -194,11 +199,10 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
               contentColor: currentContentColor,
               isSelected: isSelected,
               onTap: () {
-                // Original tag now handles its own tap for selection
                 if (widget.isRecording) return;
-                if (isEditingThis)
-                  _stopEditMode(); // Still stop edit mode if active
-                else {
+                if (isEditingThis) {
+                  _stopEditMode();
+                } else {
                   _stopEditMode();
                   widget.onCategorySelected(category);
                 }
@@ -257,14 +261,11 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
           bool shouldDim =
               widget.isRecording && !isSelected && !(isEditingThis && isCustom);
 
-          // The outer GestureDetector is now primarily for long-press and dimming.
-          // Tap handling for selection is moved into individual tag widgets.
           return GestureDetector(
             key: ValueKey("outer-gesture-$categoryId"),
             onLongPress: isCustom && !widget.isRecording
                 ? () => _startEditMode(categoryId)
                 : null,
-            // onTap: outerTapCallback, // Tap is now handled by the specific tag widget
             child: Opacity(
               opacity: shouldDim ? 0.5 : 1.0,
               child: finalTagStructure,
@@ -295,9 +296,7 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
                 : Colors.black.withOpacity(0.75),
           );
         } else {
-          // Original "Add New" button style
           addNewButtonWidget = GestureDetector(
-            // This is the original "Add New" button
             onTap: widget.isRecording
                 ? null
                 : () => _showAddCategoryDialog(context),
@@ -342,7 +341,7 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
           );
         }
 
-        categoryWidgets.add(
+        allDisplayItems.add(
           GestureDetector(
             key: const ValueKey("add-new-outer-gesture"),
             behavior: HitTestBehavior.opaque,
@@ -359,6 +358,31 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
           ),
         );
 
+        // The core Wrap widget that displays the items
+        Widget wrapLayout = Wrap(
+          spacing: 12.0,
+          runSpacing: 12.0,
+          alignment: WrapAlignment.center,
+          children: allDisplayItems,
+        );
+
+        Widget finalLayoutWidget;
+
+        // Conditionally make the Wrap scrollable if item count exceeds threshold
+        if (allDisplayItems.length > widget.maxItemsBeforeVerticalScroll) {
+          finalLayoutWidget = SizedBox(
+            height: widget.scrollHeightWhenWrapped,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.vertical,
+              // Add some internal padding for the scrollable content if needed
+              // padding: const EdgeInsets.only(bottom: 8.0),
+              child: wrapLayout,
+            ),
+          );
+        } else {
+          finalLayoutWidget = wrapLayout;
+        }
+
         return GestureDetector(
           onTap: _stopEditMode,
           child: Container(
@@ -367,12 +391,7 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
               vertical: 12.0,
               horizontal: 8.0,
             ),
-            child: Wrap(
-              spacing: 12.0,
-              runSpacing: 12.0,
-              alignment: WrapAlignment.center,
-              children: categoryWidgets,
-            ),
+            child: finalLayoutWidget,
           ),
         );
       },
