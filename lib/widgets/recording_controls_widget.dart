@@ -25,6 +25,7 @@ class RecordingControlsWidget extends StatelessWidget {
     required this.isRecorderInitialized,
     required this.onStartStopRecording,
     required this.onTogglePausePlayRecording,
+    required Color waveformColor,
   });
 
   @override

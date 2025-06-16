@@ -1,10 +1,10 @@
+import 'package:echolog/models/filter_state.dart'; // Assuming you have this for filters
+import 'package:echolog/models/recording_entry.dart';
+import 'package:echolog/widgets/recording_card.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:hive_flutter/hive_flutter.dart';
-import 'package:echolog/models/recording_entry.dart';
-import 'package:echolog/models/filter_state.dart'; // Assuming you have this for filters
-import 'package:echolog/widgets/recording_card.dart';
+import 'package:hive/hive.dart';
 
 class RecordingsListView extends StatefulWidget {
   final ValueListenable<Box<RecordingEntry>> recordingsBoxListenable;
@@ -48,36 +48,29 @@ class RecordingsListView extends StatefulWidget {
 class _RecordingsListViewState extends State<RecordingsListView> {
   List<RecordingEntry> _filterAndSortRecordings(Box<RecordingEntry> box) {
     var recordings = box.values
-        .where(
-          (entry) => true,
-        ) // FIXME: entry.isVaulted is not defined on RecordingEntry. Assuming not vaulted for now.
-        .toList()
-        .cast<RecordingEntry>(); // Exclude vaulted
+        .toList(); // Removed .where((entry) => !entry.isVaulted)
 
     // Apply filters
     if (widget.currentFilters.moodName != null &&
         widget.currentFilters.moodName!.isNotEmpty) {
-      recordings = recordings.where((r) {
-        return r.moodName == widget.currentFilters.moodName;
-      }).toList();
+      recordings = recordings
+          .where((r) => r.moodName == widget.currentFilters.moodName)
+          .toList();
     }
+
     if (widget.currentFilters.dateRecordedRange != null) {
+      final startDate = widget.currentFilters.dateRecordedRange!.start;
+      // Inclusive end date by taking the start of the next day
+      final inclusiveEndDate = widget.currentFilters.dateRecordedRange!.end.add(
+        const Duration(days: 1),
+      );
       recordings = recordings.where((r) {
         final recordDate = r.dateRecorded;
-        return !recordDate.isBefore(
-          widget.currentFilters.dateRecordedRange!.start,
-        );
+        return !recordDate.isBefore(startDate) &&
+            recordDate.isBefore(inclusiveEndDate);
       }).toList();
     }
-    if (widget.currentFilters.dateRecordedRange != null) {
-      recordings = recordings.where((r) {
-        final recordDate = r.dateRecorded;
-        // Inclusive end date by adding a day and checking if before
-        final inclusiveEndDate = widget.currentFilters.dateRecordedRange!.end
-            .add(const Duration(days: 1));
-        return recordDate.isBefore(inclusiveEndDate);
-      }).toList();
-    }
+
     if (widget.currentFilters.searchNameQuery != null &&
         widget.currentFilters.searchNameQuery!.trim().isNotEmpty) {
       final query = widget.currentFilters.searchNameQuery!.toLowerCase().trim();
@@ -88,38 +81,21 @@ class _RecordingsListViewState extends State<RecordingsListView> {
       }).toList();
     }
 
-    // Apply sorting
-    // recordings.sort((a, b) {
-    //   int comparison;
-    //   switch (widget.currentFilters.sortBy) {
-    //     case SortByType.date:
-    //       comparison = a.dateRecorded.compareTo(b.dateRecorded);
-    //       break;
-    //     case SortByType.duration:
-    //       comparison = a.duration.compareTo(b.duration);
-    //       break;
-    //     case SortByType.name:
-    //     default:
-    //       comparison = a.displayName.toLowerCase().compareTo(
-    //         b.displayName.toLowerCase(),
-    //       );
-    //       break;
-    //   }
-    //   return widget.currentFilters.sortOrder == SortOrder.ascending
-    //       ? comparison
-    //       : -comparison;
-    // });
+    // Apply sorting: Newest recordings on top
+    recordings.sort((a, b) => b.dateRecorded.compareTo(a.dateRecorded));
+
     return recordings;
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return ValueListenableBuilder<Box<RecordingEntry>>(
       valueListenable: widget.recordingsBoxListenable,
       builder: (context, box, _) {
-        final filteredRecordings = _filterAndSortRecordings(box);
+        final filteredAndSortedRecordings = _filterAndSortRecordings(box);
 
-        if (filteredRecordings.isEmpty) {
+        if (filteredAndSortedRecordings.isEmpty) {
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(20.0),
@@ -130,7 +106,7 @@ class _RecordingsListViewState extends State<RecordingsListView> {
                 textAlign: TextAlign.center,
                 style: GoogleFonts.poppins(
                   fontSize: 16,
-                  color: Theme.of(context).hintColor.withOpacity(0.8),
+                  color: theme.hintColor.withOpacity(0.8),
                 ),
               ),
             ),
@@ -139,18 +115,20 @@ class _RecordingsListViewState extends State<RecordingsListView> {
 
         return ListView.builder(
           padding: const EdgeInsets.only(
-            bottom: 80.0,
+            bottom: 80.0, // Padding for FAB or bottom controls
             top: 8.0,
-          ), // Padding for FAB or bottom controls
-          itemCount: filteredRecordings.length,
+            left: 8.0, // Added horizontal padding for consistency
+            right: 8.0, // Added horizontal padding for consistency
+          ),
+          itemCount: filteredAndSortedRecordings.length,
           itemBuilder: (context, index) {
-            final entry = filteredRecordings[index];
-            // Determine if this specific card's audio is the one currently playing
-            final bool isThisEntryPlaying =
-                widget.currentlyPlayingFileId == entry.id && entry.isPlaying;
+            final entry = filteredAndSortedRecordings[index];
+
+            final bool isSelectedForPlayback =
+                widget.currentlyPlayingFileId == entry.id;
 
             double progressPercentForThisCard = 0.0;
-            if (isThisEntryPlaying &&
+            if (isSelectedForPlayback &&
                 widget.currentTotalDuration.inMilliseconds > 0) {
               progressPercentForThisCard =
                   (widget.currentPlaybackProgress.inMilliseconds /
@@ -158,28 +136,71 @@ class _RecordingsListViewState extends State<RecordingsListView> {
                       .clamp(0.0, 1.0);
             }
 
-            return RecordingCard(
-              // Using ValueKey ensures widget rebuilds if crucial data like isPlaying changes
-              key: ValueKey(
-                'recording_card_${entry.id}_${entry.moodColor.value}_$isThisEntryPlaying',
+            final bool displayAsPlaying =
+                isSelectedForPlayback && entry.isPlaying;
+
+            return Dismissible(
+              key: ValueKey('dismissible_${entry.id}'),
+              direction: DismissDirection.endToStart,
+              onDismissed: (direction) {
+                widget.onDismissRecording(entry);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text("${entry.displayName} deleted"),
+                    action: SnackBarAction(
+                      label: "Undo",
+                      onPressed: () {
+                        // TODO: Implement undo logic if desired, e.g., re-add to box
+                      },
+                    ),
+                  ),
+                );
+              },
+              background: Container(
+                color: Colors.redAccent.withOpacity(0.9),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                alignment: Alignment.centerRight,
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Icon(
+                      Icons.delete_sweep_outlined,
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                    SizedBox(width: 8),
+                    Text(
+                      "Delete",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              recording: entry,
-              isPlaying: isThisEntryPlaying,
-              onPlayToggle: () =>
-                  widget.onTogglePlay(entry, filteredRecordings),
-              onShare: () => widget.onShare(entry),
-              onTranscribe: () => widget.onTranscribe(entry),
-              onMoveToVault: () => widget.onMoveToVault(entry),
-              onDelete: () => widget.onDismissRecording(entry),
-              onViewTranscription: widget.onViewTranscription != null
-                  ? () => widget.onViewTranscription!(entry)
-                  : null,
-              // Pass the calculated progress and seek request handler to the card
-              playbackProgressPercent: progressPercentForThisCard,
-              // Only allow seek if this card is the one playing and a seek handler is provided
-              onSeekRequest: isThisEntryPlaying && widget.onSeekRequest != null
-                  ? widget.onSeekRequest
-                  : null,
+              child: RecordingCard(
+                key: ValueKey(
+                  'recording_card_${entry.id}_${entry.moodColor.value}_$displayAsPlaying',
+                ),
+                recording: entry,
+                isPlaying: displayAsPlaying,
+                onPlayToggle: () =>
+                    widget.onTogglePlay(entry, filteredAndSortedRecordings),
+                onShare: () => widget.onShare(entry),
+                onTranscribe: () => widget.onTranscribe(entry),
+                onMoveToVault: () => widget.onMoveToVault(entry),
+                onDelete: () => widget.onDismissRecording(entry),
+                onViewTranscription: widget.onViewTranscription != null
+                    ? () => widget.onViewTranscription!(entry)
+                    : null,
+                playbackProgressPercent: progressPercentForThisCard,
+                onSeekRequest:
+                    isSelectedForPlayback && widget.onSeekRequest != null
+                    ? widget.onSeekRequest
+                    : null,
+              ),
             );
           },
         );

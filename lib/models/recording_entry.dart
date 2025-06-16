@@ -33,16 +33,14 @@ class RecordingEntry extends HiveObject {
   late String moodEmoji;
 
   @HiveField(9)
-  String? transcription; // Existing field
+  String? transcription;
 
   @HiveField(10)
-  List<double>? waveformPoints; // NEW: For mini waveform preview
+  List<double>? waveformPoints;
 
   @HiveField(11)
-  String? summaryPreview; // NEW: For AI summary/transcript preview
+  String? summaryPreview;
 
-  // This field is primarily for UI state and might not always be persisted
-  // or could be handled differently. If you persist it, ensure it's reset appropriately.
   @HiveField(12)
   bool isPlaying;
 
@@ -57,40 +55,33 @@ class RecordingEntry extends HiveObject {
     required this.moodIconColor,
     required this.moodEmoji,
     this.transcription,
-    this.waveformPoints, // Added to constructor
-    this.summaryPreview, // Added to constructor
+    this.waveformPoints,
+    this.summaryPreview,
     this.isPlaying = false,
   });
 
-  // Method to convert RecordingEntry instance to a JSON map
   Map<String, dynamic> toJson() {
     return {
       'id': id,
-      'filePath':
-          filePath, // This path will be relative to the export package or an old path
+      'filePath': filePath,
       'displayName': displayName,
-      'duration': duration.inMilliseconds, // Store Duration as milliseconds
-      'dateRecorded': dateRecorded
-          .toIso8601String(), // Store DateTime as ISO8601 string
+      'duration': duration.inMilliseconds,
+      'dateRecorded': dateRecorded.toIso8601String(),
       'moodName': moodName,
-      'moodColor': moodColor.value, // Store Color as int
-      'moodIconColor': moodIconColor.value, // Store Color as int
+      'moodColor': moodColor.value,
+      'moodIconColor': moodIconColor.value,
       'moodEmoji': moodEmoji,
       'transcription': transcription,
       'waveformPoints': waveformPoints,
       'summaryPreview': summaryPreview,
-      'isPlaying':
-          isPlaying, // Consider if this should be exported or always default to false on import
+      'isPlaying': isPlaying,
     };
   }
 
-  // Factory constructor to create a RecordingEntry instance from a JSON map
   factory RecordingEntry.fromJson(Map<String, dynamic> json) {
     return RecordingEntry(
       id: json['id'] as String,
-      filePath:
-          json['filePath']
-              as String, // This path will need to be updated during import
+      filePath: json['filePath'] as String,
       displayName: json['displayName'] as String,
       duration: Duration(milliseconds: json['duration'] as int),
       dateRecorded: DateTime.parse(json['dateRecorded'] as String),
@@ -103,9 +94,6 @@ class RecordingEntry extends HiveObject {
           ?.map((e) => (e as num).toDouble())
           .toList(),
       summaryPreview: json['summaryPreview'] as String?,
-      // isPlaying will default to false as per constructor if not in JSON,
-      // or use the value from JSON if present.
-      // It's often better to reset UI state like isPlaying on import.
       isPlaying: json['isPlaying'] as bool? ?? false,
     );
   }

@@ -1,11 +1,11 @@
-import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart';
 import 'dart:math' as math;
 
 import 'package:echolog/models/recording_entry.dart';
-import 'package:echolog/widgets/mini_waveform_painter.dart';
 import 'package:echolog/widgets/animated_waveform_play_button.dart';
+import 'package:echolog/widgets/mini_waveform_painter.dart';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 
 class RecordingCard extends StatefulWidget {
   final RecordingEntry recording;
@@ -20,9 +20,6 @@ class RecordingCard extends StatefulWidget {
   final bool isSelected;
   final VoidCallback? onSelect;
   final VoidCallback? onLongPress;
-  // IMPORTANT: This value MUST be maintained by the parent (HomeScreen)
-  // when the audio is PAUSED. It should NOT be reset to 0.0 on pause.
-  // It should only be 0.0 when playback is fully stopped or at the very beginning.
   final double playbackProgressPercent;
   final Function(double)? onSeekRequest;
 
@@ -36,11 +33,11 @@ class RecordingCard extends StatefulWidget {
     this.onTranscribe,
     this.onMoveToVault,
     this.onViewTranscription,
-    required this.isPlaying, // This tells the button its icon (play/pause)
+    required this.isPlaying,
     this.isSelected = false,
     this.onSelect,
     this.onLongPress,
-    this.playbackProgressPercent = 0.0, // Default if not provided
+    this.playbackProgressPercent = 0.0,
     this.onSeekRequest,
   });
 
@@ -48,8 +45,48 @@ class RecordingCard extends StatefulWidget {
   State<RecordingCard> createState() => _RecordingCardState();
 }
 
-class _RecordingCardState extends State<RecordingCard> {
+class _RecordingCardState extends State<RecordingCard>
+    with TickerProviderStateMixin {
+  // Add TickerProviderStateMixin
   bool _isTranscriptionExpanded = false;
+  late AnimationController _animationController;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      vsync: this,
+      // Duration can be arbitrary as MiniWaveformPainter uses DateTime.now()
+      // but it's good practice to set one.
+      duration: const Duration(milliseconds: 1500),
+    );
+
+    if (widget.isPlaying) {
+      _animationController.repeat();
+    }
+  }
+
+  @override
+  void didUpdateWidget(RecordingCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isPlaying != oldWidget.isPlaying) {
+      if (widget.isPlaying) {
+        if (!_animationController.isAnimating) {
+          _animationController.repeat();
+        }
+      } else {
+        if (_animationController.isAnimating) {
+          _animationController.stop();
+        }
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
 
   String _formatDuration(Duration duration) {
     String twoDigits(int n) => n.toString().padLeft(2, "0");
@@ -125,7 +162,6 @@ class _RecordingCardState extends State<RecordingCard> {
         .toColor();
 
     Duration elapsedDuration = Duration.zero;
-    // Calculate elapsed duration if there's any progress (playing OR PAUSED)
     if (widget.playbackProgressPercent > 0) {
       final totalMilliseconds = widget.recording.duration.inMilliseconds;
       final elapsedMilliseconds =
@@ -134,10 +170,6 @@ class _RecordingCardState extends State<RecordingCard> {
     }
 
     String durationToDisplay;
-    // If there's progress (widget.playbackProgressPercent > 0), it means the track
-    // has been played at least some amount and could be currently playing OR PAUSED.
-    // In this case, show "elapsed / total".
-    // Otherwise (stopped/not started, widget.playbackProgressPercent is 0), show total duration.
     if (widget.playbackProgressPercent > 0) {
       durationToDisplay =
           '${_formatDuration(elapsedDuration)} / ${_formatDuration(widget.recording.duration)}';
@@ -344,7 +376,7 @@ class _RecordingCardState extends State<RecordingCard> {
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTapDown: (details) {
-                    if (widget.onSeekRequest != null && widget.isPlaying) {
+                    if (widget.onSeekRequest != null) {
                       final RenderBox box =
                           context.findRenderObject() as RenderBox;
                       final localOffset = box.globalToLocal(
@@ -354,12 +386,11 @@ class _RecordingCardState extends State<RecordingCard> {
                           .clamp(0.0, 1.0);
                       widget.onSeekRequest!(seekPercent);
                     } else if (!widget.isPlaying) {
-                      // If PAUSED or STOPPED
-                      widget.onPlayToggle(); // Parent handles resume or start
+                      widget.onPlayToggle();
                     }
                   },
                   onHorizontalDragUpdate: (details) {
-                    if (widget.onSeekRequest != null && widget.isPlaying) {
+                    if (widget.onSeekRequest != null) {
                       final RenderBox box =
                           context.findRenderObject() as RenderBox;
                       final localOffset = box.globalToLocal(
@@ -378,20 +409,16 @@ class _RecordingCardState extends State<RecordingCard> {
                     ),
                     width: double.infinity,
                     child: CustomPaint(
+                      // Repaint driven by controller only if playing
                       painter: MiniWaveformPainter(
                         waveformData: waveformData,
                         waveColor: baseWaveColor,
-                        strokeWidth: 1.8,
-                        // CRITICAL: The painter uses the playbackProgressPercent
-                        // directly. If this value is correctly maintained by the
-                        // parent widget (HomeScreen) during pause (i.e., NOT reset
-                        // to 0.0), the dot will stay where it was paused.
-                        // If the dot disappears, it means widget.playbackProgressPercent
-                        // is becoming 0.0 when you pause, which is an issue in the
-                        // PARENT WIDGET'S state management.
+                        strokeWidth: 3,
                         progressPercent: widget.playbackProgressPercent,
                         progressColor: progressWaveColor,
                         thumbColor: thumbWaveColor,
+                        // This tells painter to use animation logic
+                        isAnimating: widget.isPlaying,
                       ),
                     ),
                   ),
@@ -422,21 +449,23 @@ class _RecordingCardState extends State<RecordingCard> {
                       ),
                     ],
                   ),
-                  Text(
-                    durationToDisplay, // This correctly shows elapsed/total if progress > 0
-                    style: GoogleFonts.poppins(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: theme.colorScheme.onSurface.withOpacity(0.9),
+                  Expanded(
+                    child: Text(
+                      durationToDisplay,
+                      style: GoogleFonts.poppins(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: theme.colorScheme.onSurface.withOpacity(0.9),
+                      ),
+                      textAlign: TextAlign.end,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
                     ),
-                    textAlign: TextAlign.end,
                   ),
+                  const SizedBox(width: 8),
                   AnimatedWaveformPlayButton(
-                    // isPlaying is true if actively playing, false if paused/stopped.
-                    // This controls the button's icon.
                     isPlaying: widget.isPlaying,
-                    onTap: widget
-                        .onPlayToggle, // Parent handles actual play/pause/resume
+                    onTap: widget.onPlayToggle,
                     activeColor: widget.recording.moodColor,
                     inactiveColor: theme.hintColor.withOpacity(0.6),
                     size: const Size(32, 32),

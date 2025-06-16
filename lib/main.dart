@@ -1,19 +1,18 @@
 import 'package:echolog/services/recording_service.dart';
 import 'package:echolog/utils/color_adapter.dart';
+import 'package:echolog/utils/duration_adapter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
 
-import 'home_screen.dart';
-import 'models/recording_entry.dart';
-import 'models/custom_category.dart';
 import 'app_themes.dart';
+import 'home_screen.dart';
+import 'models/custom_category.dart';
+import 'models/recording_entry.dart';
+import 'providers/playback_provider.dart';
 import 'theme_provider.dart';
-import 'utils/duration_adapter.dart';
-// import 'screens/recording_player_screen.dart'; // REMOVE THIS
-import 'providers/playback_provider.dart'; // ADD THIS
+// REMOVE THIS
 
 const String WIDGET_METHOD_CHANNEL_NAME = "com.anexon.echolog/widget";
 const String recordingsBoxName = 'recordingsBoxv2';
