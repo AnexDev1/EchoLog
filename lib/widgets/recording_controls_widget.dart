@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../utils/duration_formatter.dart'; // Import the formatter
+import '../utils/duration_formatter.dart';
 
 class RecordingControlsWidget extends StatelessWidget {
   final bool isRecording;
@@ -11,7 +11,6 @@ class RecordingControlsWidget extends StatelessWidget {
   final VoidCallback onStartStopRecording;
   final VoidCallback onTogglePausePlayRecording;
 
-  // Sizing constants
   static const double _buttonCircularDiameter = 80.0;
   static const double _iconSize = 40.0;
   static const Duration _animationDuration = Duration(milliseconds: 400);
@@ -52,10 +51,8 @@ class RecordingControlsWidget extends StatelessWidget {
       targetBorderRadius = BorderRadius.circular(35.0);
 
       if (theme.brightness == Brightness.light) {
-        // THEMED: Use a more distinct background for the recording bar in light theme
         targetBackgroundColor = theme.colorScheme.surfaceContainerHigh;
       } else {
-        // For dark theme, the original surface color with opacity works well
         targetBackgroundColor = theme.colorScheme.surface.withOpacity(0.95);
       }
 
@@ -68,7 +65,6 @@ class RecordingControlsWidget extends StatelessWidget {
         ),
       ];
     } else {
-      // Circular state
       if (categorySelected && isRecorderInitialized) {
         targetBackgroundColor = theme.colorScheme.secondary;
       } else {
@@ -151,15 +147,7 @@ class RecordingControlsWidget extends StatelessWidget {
     Color iconColorOnBar =
         selectedCategoryData?['iconColor'] as Color? ??
         theme.colorScheme.primary;
-    // Text color on the recording bar should contrast with its background
-    // If bar is surfaceContainerHigh (light theme) or surface (dark theme), onSurface should work.
     Color durationTextColor = theme.colorScheme.onSurface;
-    if (theme.brightness == Brightness.light &&
-        targetBackgroundColor == theme.colorScheme.surfaceContainerHigh) {
-      // Ensure text contrasts with surfaceContainerHigh. onSurface should be fine.
-      // If surfaceContainerHigh was very dark, we might need theme.colorScheme.onSurfaceVariant or similar.
-      // But typically onSurface is designed to work on these container colors.
-    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12.0),
@@ -197,7 +185,7 @@ class RecordingControlsWidget extends StatelessWidget {
               child: Text(
                 formatDuration(recordingDuration),
                 style: GoogleFonts.poppins(
-                  color: durationTextColor, // Using determined text color
+                  color: durationTextColor,
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.5,

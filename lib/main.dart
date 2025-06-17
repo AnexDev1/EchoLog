@@ -1,3 +1,4 @@
+import 'package:echolog/providers/streak_provider.dart';
 import 'package:echolog/services/recording_service.dart';
 import 'package:echolog/utils/color_adapter.dart';
 import 'package:echolog/utils/duration_adapter.dart';
@@ -49,6 +50,7 @@ Future<void> main() async {
       // Use MultiProvider if you have more than one
       providers: [
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => StreakProvider()),
         ChangeNotifierProvider(create: (_) => PlaybackProvider()), // ADD THIS
       ],
       child: const MyApp(),
