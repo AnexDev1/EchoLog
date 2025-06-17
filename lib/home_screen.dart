@@ -3,9 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:echolog/hidden_recordings_screen.dart';
-import 'package:echolog/main.dart'
-    hide
-        updateWidgetWithRecentRecording; // For recordingsBoxName, customCategoriesBoxName, hiddenRecordingsBox
+import 'package:echolog/main.dart';
+// For recordingsBoxName, customCategoriesBoxName, hiddenRecordingsBox
 import 'package:echolog/models/custom_category.dart';
 import 'package:echolog/models/filter_state.dart';
 import 'package:echolog/models/recording_entry.dart';
@@ -22,6 +21,7 @@ import 'package:echolog/widgets/enter_password_dialog.dart';
 import 'package:echolog/widgets/filter_bottom_sheet_widget.dart';
 import 'package:echolog/widgets/recording_controls_widget.dart';
 import 'package:echolog/widgets/recordings_list_view.dart';
+import 'services/dynamic_greeting_service.dart';
 import 'package:echolog/widgets/save_recording_dialog.dart';
 import 'package:echolog/widgets/streak_widget.dart';
 import 'package:flutter/material.dart';
@@ -49,7 +49,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Map<String, dynamic>? _selectedCategoryData;
   bool _isTranscribingLemonFox = false;
-
+  String? _currentGreeting;
+  late AnimationController _greetingAnimController;
+  late Animation<double> _greetingFadeAnim;
   final List<Map<String, dynamic>> _predefinedCategories = [
     {
       'name': 'Vent',
@@ -130,6 +132,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _initializeRecorder();
     _initializePlayer();
     _loadHiddenAccessPreference();
+    _greetingAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 350),
+    );
+    _greetingFadeAnim = CurvedAnimation(
+      parent: _greetingAnimController,
+      curve: Curves.easeInOut,
+    );
+    _greetingAnimController.value = 1.0;
   }
 
   @override
@@ -949,9 +960,45 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       ); // Reset duration after dialog
   }
 
-  void _onCategorySelected(Map<String, dynamic>? category) {
+  void _onCategorySelected(Map<String, dynamic>? category) async {
     if (_isRecording) return; // Don't change category while recording
-    setState(() => _selectedCategoryData = category);
+
+    // Mood-aware greetings for these moods:
+    final moodsWithSpecialGreeting = [
+      'vent',
+      'brainstorm',
+      'random talk',
+      'gratitude',
+    ];
+
+    String? moodGreeting;
+    if (category != null) {
+      final mood = (category['name'] as String?) ?? '';
+      final emoji = (category['emoji'] as String?) ?? '';
+      if (moodsWithSpecialGreeting.any((m) => mood.toLowerCase().contains(m))) {
+        moodGreeting = DynamicGreetingService.getMoodAwareGreeting(
+          mood,
+          emoji: emoji,
+        );
+      }
+    }
+
+    // Animate out, set greeting, then animate in
+    await _greetingAnimController.reverse();
+    setState(() {
+      _selectedCategoryData = category;
+      _currentGreeting = moodGreeting;
+    });
+    await _greetingAnimController.forward();
+  }
+
+  void _resetGreetingToDynamic() async {
+    // Animate out, reset, animate in
+    await _greetingAnimController.reverse();
+    setState(() {
+      _currentGreeting = null;
+    });
+    await _greetingAnimController.forward();
   }
 
   void _showAdvancedFilterSheet(
@@ -1048,6 +1095,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildAppBar(BuildContext context) {
     final theme = Theme.of(context);
+    final box = Hive.box<RecordingEntry>(recordingsBoxName);
+    final lastRecording = box.isNotEmpty ? box.values.last : null;
+    final greeting = DynamicGreetingService.getGreeting(
+      now: DateTime.now(),
+      lastRecording: lastRecording,
+    );
     Widget appBarWidget = AppBar(
       leading: Consumer<StreakProvider>(
         builder: (context, streakProvider, _) {
@@ -1150,17 +1203,39 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   };
                 }
 
+                // Define greeting here
+                final box = Hive.box<RecordingEntry>(recordingsBoxName);
+                final lastRecording = box.isNotEmpty ? box.values.last : null;
+                final greeting = DynamicGreetingService.getGreeting(
+                  now: DateTime.now(),
+                  lastRecording: lastRecording,
+                );
+
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: <Widget>[
                     Center(
-                      child: Text(
-                        'How are you doing?',
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.poppins(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w600,
-                          color: theme.colorScheme.onBackground,
+                      child: GestureDetector(
+                        onTap: () {
+                          // If mood-aware greeting is showing, revert to dynamic on tap
+                          if (_currentGreeting != null) {
+                            _resetGreetingToDynamic();
+                          }
+                        },
+                        child: FadeTransition(
+                          opacity: _greetingFadeAnim,
+                          child: Center(
+                            child: Text(
+                              _currentGreeting ?? greeting,
+                              // Use the greeting from DynamicGreetingService
+                              textAlign: TextAlign.center,
+                              style: GoogleFonts.poppins(
+                                fontSize: 26,
+                                fontWeight: FontWeight.w600,
+                                color: theme.colorScheme.onBackground,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ),
