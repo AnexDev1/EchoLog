@@ -6,6 +6,7 @@ import 'package:echolog/widgets/mini_waveform_painter.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+// ...existing imports...
 
 class RecordingCard extends StatefulWidget {
   final RecordingEntry recording;
@@ -16,12 +17,15 @@ class RecordingCard extends StatefulWidget {
   final VoidCallback? onTranscribe;
   final VoidCallback? onMoveToVault;
   final VoidCallback? onViewTranscription;
-  final bool isPlaying; // True if actively playing, FALSE IF PAUSED OR STOPPED
+  final VoidCallback? onHideTranscription;
+  final VoidCallback? onShowTranscription; // <-- NEW
+  final bool isPlaying;
   final bool isSelected;
   final VoidCallback? onSelect;
   final VoidCallback? onLongPress;
   final double playbackProgressPercent;
   final Function(double)? onSeekRequest;
+  final bool isOut;
 
   const RecordingCard({
     super.key,
@@ -33,12 +37,15 @@ class RecordingCard extends StatefulWidget {
     this.onTranscribe,
     this.onMoveToVault,
     this.onViewTranscription,
+    this.onHideTranscription,
+    this.onShowTranscription, // <-- NEW
     required this.isPlaying,
     this.isSelected = false,
     this.onSelect,
     this.onLongPress,
     this.playbackProgressPercent = 0.0,
     this.onSeekRequest,
+    this.isOut = false,
   });
 
   @override
@@ -47,8 +54,8 @@ class RecordingCard extends StatefulWidget {
 
 class _RecordingCardState extends State<RecordingCard>
     with TickerProviderStateMixin {
-  // Add TickerProviderStateMixin
   bool _isTranscriptionExpanded = false;
+  bool _isTranscriptionHidden = false;
   late AnimationController _animationController;
 
   @override
@@ -56,11 +63,8 @@ class _RecordingCardState extends State<RecordingCard>
     super.initState();
     _animationController = AnimationController(
       vsync: this,
-      // Duration can be arbitrary as MiniWaveformPainter uses DateTime.now()
-      // but it's good practice to set one.
       duration: const Duration(milliseconds: 1500),
     );
-
     if (widget.isPlaying) {
       _animationController.repeat();
     }
@@ -121,35 +125,34 @@ class _RecordingCardState extends State<RecordingCard>
         fullTranscription != null && fullTranscription.isNotEmpty;
     final bool hasSummary = summaryPreview != null && summaryPreview.isNotEmpty;
 
-    String transcriptionTextToShow;
+    String transcriptionTextToShow = "";
     bool canExpand = false;
     const int collapsedPreviewMaxLines = 2;
     const int collapsedPreviewLength = 120;
 
-    if (hasFullTranscription) {
-      if (_isTranscriptionExpanded) {
-        transcriptionTextToShow = fullTranscription;
-      } else {
-        if (hasSummary) {
-          transcriptionTextToShow = summaryPreview;
+    if (!_isTranscriptionHidden) {
+      if (hasFullTranscription) {
+        if (_isTranscriptionExpanded) {
+          transcriptionTextToShow = fullTranscription;
         } else {
-          transcriptionTextToShow =
-              fullTranscription.length > collapsedPreviewLength
-              ? '${fullTranscription.substring(0, collapsedPreviewLength)}...'
-              : fullTranscription;
+          if (hasSummary) {
+            transcriptionTextToShow = summaryPreview;
+          } else {
+            transcriptionTextToShow =
+                fullTranscription.length > collapsedPreviewLength
+                ? '${fullTranscription.substring(0, collapsedPreviewLength)}...'
+                : fullTranscription;
+          }
         }
+        if (fullTranscription.length > transcriptionTextToShow.length ||
+            (hasSummary && fullTranscription != summaryPreview) ||
+            _isTranscriptionExpanded) {
+          canExpand = true;
+        }
+      } else if (hasSummary) {
+        transcriptionTextToShow = summaryPreview;
+        canExpand = false;
       }
-      if (fullTranscription.length > transcriptionTextToShow.length ||
-          (hasSummary && fullTranscription != summaryPreview) ||
-          _isTranscriptionExpanded) {
-        canExpand = true;
-      }
-    } else if (hasSummary) {
-      transcriptionTextToShow = summaryPreview;
-      canExpand = false;
-    } else {
-      transcriptionTextToShow = "";
-      canExpand = false;
     }
 
     final Color baseWaveColor = widget.recording.moodColor.withOpacity(0.65);
@@ -246,6 +249,22 @@ class _RecordingCardState extends State<RecordingCard>
                             widget.onViewTranscription != null) {
                           widget.onViewTranscription!();
                         }
+                        if (value == 'hide_transcription') {
+                          setState(() {
+                            _isTranscriptionHidden = true;
+                          });
+                          if (widget.onHideTranscription != null) {
+                            widget.onHideTranscription!();
+                          }
+                        }
+                        if (value == 'show_transcription') {
+                          setState(() {
+                            _isTranscriptionHidden = false;
+                          });
+                          if (widget.onShowTranscription != null) {
+                            widget.onShowTranscription!();
+                          }
+                        }
                       },
                       itemBuilder: (BuildContext context) =>
                           <PopupMenuEntry<String>>[
@@ -296,14 +315,43 @@ class _RecordingCardState extends State<RecordingCard>
                                   ],
                                 ),
                               ),
-                            if (widget.onMoveToVault != null)
+                            if (hasFullTranscription && !_isTranscriptionHidden)
                               const PopupMenuItem<String>(
+                                value: 'hide_transcription',
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.visibility_off_outlined,
+                                      size: 20,
+                                    ),
+                                    SizedBox(width: 10),
+                                    Text('Hide Transcription'),
+                                  ],
+                                ),
+                              ),
+                            if (hasFullTranscription && _isTranscriptionHidden)
+                              const PopupMenuItem<String>(
+                                value: 'show_transcription',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.visibility_outlined, size: 20),
+                                    SizedBox(width: 10),
+                                    Text('Show Transcription'),
+                                  ],
+                                ),
+                              ),
+                            if (widget.onMoveToVault != null)
+                              PopupMenuItem<String>(
                                 value: 'move_to_vault',
                                 child: Row(
                                   children: [
-                                    Icon(Icons.shield_outlined, size: 20),
-                                    SizedBox(width: 10),
-                                    Text('Move to Vault'),
+                                    const Icon(Icons.shield_outlined, size: 20),
+                                    const SizedBox(width: 10),
+                                    Text(
+                                      widget.isOut
+                                          ? 'Move Out of Vault'
+                                          : 'Move to Vault',
+                                    ),
                                   ],
                                 ),
                               ),
@@ -409,7 +457,6 @@ class _RecordingCardState extends State<RecordingCard>
                     ),
                     width: double.infinity,
                     child: CustomPaint(
-                      // Repaint driven by controller only if playing
                       painter: MiniWaveformPainter(
                         waveformData: waveformData,
                         waveColor: baseWaveColor,
@@ -417,7 +464,6 @@ class _RecordingCardState extends State<RecordingCard>
                         progressPercent: widget.playbackProgressPercent,
                         progressColor: progressWaveColor,
                         thumbColor: thumbWaveColor,
-                        // This tells painter to use animation logic
                         isAnimating: widget.isPlaying,
                       ),
                     ),
