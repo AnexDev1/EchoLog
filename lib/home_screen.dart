@@ -50,6 +50,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Map<String, dynamic>? _selectedCategoryData;
   bool _isTranscribingLemonFox = false;
   String? _currentGreeting;
+  String? _cachedDynamicGreeting;
+  DateTime? _lastGreetingUpdateDate;
   late AnimationController _greetingAnimController;
   late Animation<double> _greetingFadeAnim;
   final List<Map<String, dynamic>> _predefinedCategories = [
@@ -141,6 +143,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       curve: Curves.easeInOut,
     );
     _greetingAnimController.value = 1.0;
+    _updateDynamicGreetingIfNeeded(force: true);
   }
 
   @override
@@ -155,6 +158,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _player?.closePlayer().catchError((e) => print("Error closing player: $e"));
     _player = null;
     super.dispose();
+  }
+
+  void _updateDynamicGreetingIfNeeded({bool force = false}) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    if (_cachedDynamicGreeting == null ||
+        _lastGreetingUpdateDate != today ||
+        force) {
+      final box = Hive.box<RecordingEntry>(recordingsBoxName);
+      final lastRecording = box.isNotEmpty ? box.values.last : null;
+      _cachedDynamicGreeting = DynamicGreetingService.getGreeting(
+        now: now,
+        lastRecording: lastRecording,
+      );
+      _lastGreetingUpdateDate = today;
+    }
   }
 
   Future<void> _initializeRecorder() async {
@@ -993,10 +1012,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _resetGreetingToDynamic() async {
-    // Animate out, reset, animate in
     await _greetingAnimController.reverse();
     setState(() {
       _currentGreeting = null;
+      _updateDynamicGreetingIfNeeded(force: true);
     });
     await _greetingAnimController.forward();
   }
@@ -1226,7 +1245,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           opacity: _greetingFadeAnim,
                           child: Center(
                             child: Text(
-                              _currentGreeting ?? greeting,
+                              _currentGreeting ?? _cachedDynamicGreeting ?? '',
                               // Use the greeting from DynamicGreetingService
                               textAlign: TextAlign.center,
                               style: GoogleFonts.poppins(
