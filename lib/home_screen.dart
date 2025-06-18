@@ -59,7 +59,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     {
       'name': 'Vent',
       'emoji': '😤',
-      'color': Colors.red.shade300,
+      'color': Colors.red.shade400,
       'iconColor': Colors.red.shade100,
       'isCustom': false,
       'id': 'Vent',
@@ -67,7 +67,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     {
       'name': 'Random Talk',
       'emoji': '💬',
-      'color': Colors.blue.shade300,
+      'color': Colors.blue.shade400,
       'iconColor': Colors.blue.shade100,
       'isCustom': false,
       'id': 'Random Talk',
@@ -75,7 +75,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     {
       'name': 'Brainstorm',
       'emoji': '💡',
-      'color': Colors.green.shade300,
+      'color': Colors.green.shade400,
       'iconColor': Colors.green.shade100,
       'isCustom': false,
       'id': 'Brainstorm',
@@ -83,7 +83,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     {
       'name': 'Gratitude',
       'emoji': '🙏',
-      'color': Colors.orange.shade300,
+      'color': Colors.orange.shade400,
       'iconColor': Colors.orange.shade100,
       'isCustom': false,
       'id': 'Gratitude',
@@ -117,6 +117,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _tapCount = 0;
   Timer? _tapTimer;
   final int _tripleTapMilliseconds = 500;
+  DateTime? _lastBackPressed;
 
   List<Map<String, dynamic>> _getAllCategories(
     Box<CustomCategory> customCategoryBox,
@@ -879,13 +880,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  void _togglePausePlayRecording() {
+  Future<void> _togglePausePlayRecording() async {
     if (!_isRecording || _recorder == null || !_isRecorderInitialized) return;
-    if (_recorder!.isPaused)
-      _recorder!.resumeRecorder();
-    else
-      _recorder!.pauseRecorder();
-    if (mounted) setState(() => _isRecordingPaused = _recorder!.isPaused);
+
+    if (_recorder!.isPaused) {
+      await _recorder!.resumeRecorder();
+    } else {
+      await _recorder!.pauseRecorder();
+    }
+
+    if (mounted) {
+      setState(() => _isRecordingPaused = _recorder!.isPaused);
+    }
   }
 
   // Updated to match the signature expected by SaveRecordingDialog's onSave
@@ -1189,189 +1195,213 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           });
         }
 
-        return Scaffold(
-          appBar: PreferredSize(
-            preferredSize: const Size.fromHeight(kToolbarHeight),
-            child: _buildAppBar(context),
-          ),
-          body: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              16.0,
-              16.0,
-              16.0,
-              0,
-            ), // Use all(16.0) or specific as needed
-            child: ValueListenableBuilder<Box<CustomCategory>>(
-              valueListenable: Hive.box<CustomCategory>(
-                customCategoriesBoxName,
-              ).listenable(),
-              builder: (context, customCategoryBox, _) {
-                final allDisplayCategories = _getAllCategories(
-                  customCategoryBox,
-                );
-                final bool isAudioPlaying =
-                    _currentlyPlayingFileId != null &&
-                    (_player?.isPlaying ?? false);
+        return WillPopScope(
+          onWillPop: () async {
+            if (Navigator.of(context).canPop()) {
+              return true;
+            }
+            if (_lastBackPressed == null ||
+                DateTime.now().difference(_lastBackPressed!) >
+                    const Duration(seconds: 2)) {
+              // First press
+              _lastBackPressed = DateTime.now();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Press back again to exit'),
+                  duration: Duration(seconds: 2),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+              return false; // Prevent app from exiting
+            }
+            return true;
+          },
+          child: Scaffold(
+            appBar: PreferredSize(
+              preferredSize: const Size.fromHeight(kToolbarHeight),
+              child: _buildAppBar(context),
+            ),
+            body: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                16.0,
+                16.0,
+                16.0,
+                0,
+              ), // Use all(16.0) or specific as needed
+              child: ValueListenableBuilder<Box<CustomCategory>>(
+                valueListenable: Hive.box<CustomCategory>(
+                  customCategoriesBoxName,
+                ).listenable(),
+                builder: (context, customCategoryBox, _) {
+                  final allDisplayCategories = _getAllCategories(
+                    customCategoryBox,
+                  );
+                  final bool isAudioPlaying =
+                      _currentlyPlayingFileId != null &&
+                      (_player?.isPlaying ?? false);
 
-                Map<String, dynamic>? controlsCategoryData =
-                    _selectedCategoryData;
-                if (_currentlyPlayingEntry != null) {
-                  // If an audio track is loaded/playing
-                  controlsCategoryData = {
-                    'name': _currentlyPlayingEntry!.moodName,
-                    'emoji': _currentlyPlayingEntry!.moodEmoji,
-                    'color': _currentlyPlayingEntry!.moodColor,
-                    'iconColor': _currentlyPlayingEntry!.moodIconColor,
-                  };
-                }
+                  Map<String, dynamic>? controlsCategoryData =
+                      _selectedCategoryData;
+                  if (_currentlyPlayingEntry != null) {
+                    // If an audio track is loaded/playing
+                    controlsCategoryData = {
+                      'name': _currentlyPlayingEntry!.moodName,
+                      'emoji': _currentlyPlayingEntry!.moodEmoji,
+                      'color': _currentlyPlayingEntry!.moodColor,
+                      'iconColor': _currentlyPlayingEntry!.moodIconColor,
+                    };
+                  }
 
-                // Define greeting here
-                final box = Hive.box<RecordingEntry>(recordingsBoxName);
-                final lastRecording = box.isNotEmpty ? box.values.last : null;
-                final greeting = DynamicGreetingService.getGreeting(
-                  now: DateTime.now(),
-                  lastRecording: lastRecording,
-                );
+                  // Define greeting here
+                  final box = Hive.box<RecordingEntry>(recordingsBoxName);
+                  final lastRecording = box.isNotEmpty ? box.values.last : null;
+                  final greeting = DynamicGreetingService.getGreeting(
+                    now: DateTime.now(),
+                    lastRecording: lastRecording,
+                  );
 
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    Center(
-                      child: GestureDetector(
-                        onTap: () {
-                          // If mood-aware greeting is showing, revert to dynamic on tap
-                          if (_currentGreeting != null) {
-                            _resetGreetingToDynamic();
-                          }
-                        },
-                        child: SizedBox(
-                          height: 72,
-                          child: FadeTransition(
-                            opacity: _greetingFadeAnim,
-                            child: Center(
-                              child: Text(
-                                _currentGreeting ??
-                                    _cachedDynamicGreeting ??
-                                    '',
-                                // Use the greeting from DynamicGreetingService
-                                textAlign: TextAlign.center,
-                                style: GoogleFonts.poppins(
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.w600,
-                                  color: theme.colorScheme.onBackground,
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      Center(
+                        child: GestureDetector(
+                          onTap: () {
+                            // If mood-aware greeting is showing, revert to dynamic on tap
+                            if (_currentGreeting != null) {
+                              _resetGreetingToDynamic();
+                            }
+                          },
+                          child: SizedBox(
+                            height: 72,
+                            child: FadeTransition(
+                              opacity: _greetingFadeAnim,
+                              child: Center(
+                                child: Text(
+                                  _currentGreeting ??
+                                      _cachedDynamicGreeting ??
+                                      '',
+                                  // Use the greeting from DynamicGreetingService
+                                  textAlign: TextAlign.center,
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 26,
+                                    fontWeight: FontWeight.w600,
+                                    color: theme.colorScheme.onBackground,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
                         ),
                       ),
-                    ),
 
-                    const SizedBox(height: 25),
-                    CategorySelectorWidget(
-                      predefinedCategories: _predefinedCategories,
-                      selectedCategoryData: _selectedCategoryData,
-                      isRecording: _isRecording,
-                      onCategorySelected: _onCategorySelected,
-                    ),
-                    const SizedBox(height: 20), // Adjusted spacing from 40
-                    Center(
-                      child: RecordingControlsWidget(
-                        waveformColor: Colors.red,
+                      const SizedBox(height: 25),
+                      CategorySelectorWidget(
+                        predefinedCategories: _predefinedCategories,
+                        selectedCategoryData: _selectedCategoryData,
                         isRecording: _isRecording,
-                        isRecordingPaused: _isRecordingPaused,
-                        recordingDuration: _recordingDuration,
-                        selectedCategoryData:
-                            controlsCategoryData, // Dynamic category for color
-                        isRecorderInitialized: _isRecorderInitialized,
-                        onStartStopRecording: _startOrStopRecording,
-                        onTogglePausePlayRecording: _togglePausePlayRecording,
+                        onCategorySelected: _onCategorySelected,
+                      ),
+                      const SizedBox(height: 20), // Adjusted spacing from 40
+                      Center(
+                        child: RecordingControlsWidget(
+                          waveformColor: Colors.red,
+                          isRecording: _isRecording,
+                          isRecordingPaused: _isRecordingPaused,
+                          recordingDuration: _recordingDuration,
+                          selectedCategoryData:
+                              controlsCategoryData, // Dynamic category for color
+                          isRecorderInitialized: _isRecorderInitialized,
+                          onStartStopRecording: _startOrStopRecording,
+                          onTogglePausePlayRecording: _togglePausePlayRecording,
 
-                        // Props for the interactive waveform (main controls)
+                          // Props for the interactive waveform (main controls)
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 25), // Adjusted spacing from 40
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 0.0,
-                      ), // Adjusted from 8.0
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'Recent Recordings',
-                            style: GoogleFonts.poppins(
-                              fontSize: 20,
-                              fontWeight: FontWeight.w600,
-                              color: theme.colorScheme.onBackground,
+                      const SizedBox(height: 25), // Adjusted spacing from 40
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 0.0,
+                        ), // Adjusted from 8.0
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Recent Recordings',
+                              style: GoogleFonts.poppins(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w600,
+                                color: theme.colorScheme.onBackground,
+                              ),
                             ),
-                          ),
-                          IconButton(
-                            icon: Icon(
-                              Icons.arrow_forward_ios_rounded,
-                              color: theme.colorScheme.primary,
-                            ),
-                            tooltip: 'View All Recordings',
-                            onPressed: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => RecordingsListPage(
-                                    onTranscribe: _transcribeWithLemonFox,
-                                    onShare: _showShareOptionsDialog,
-                                    onMoveToVault: _moveToVault,
-                                    onTogglePlay: _togglePlayRecordingItem,
-                                    onDismissRecording: _handleDismissRecording,
-                                    currentlyPlayingFileId:
-                                        _currentlyPlayingFileId,
-                                    currentPlaybackProgress:
-                                        _currentPlaybackProgress,
-                                    currentTotalDuration: _currentTotalDuration,
-                                    onSeekRequest: _handleSeek,
+                            IconButton(
+                              icon: Icon(
+                                Icons.arrow_forward_ios_rounded,
+                                color: theme.colorScheme.primary,
+                              ),
+                              tooltip: 'View All Recordings',
+                              onPressed: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => RecordingsListPage(
+                                      onTranscribe: _transcribeWithLemonFox,
+                                      onShare: _showShareOptionsDialog,
+                                      onMoveToVault: _moveToVault,
+                                      onTogglePlay: _togglePlayRecordingItem,
+                                      onDismissRecording:
+                                          _handleDismissRecording,
+                                      currentlyPlayingFileId:
+                                          _currentlyPlayingFileId,
+                                      currentPlaybackProgress:
+                                          _currentPlaybackProgress,
+                                      currentTotalDuration:
+                                          _currentTotalDuration,
+                                      onSeekRequest: _handleSeek,
+                                    ),
                                   ),
-                                ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 5), // Adjusted from 15
+                      Expanded(
+                        child: ValueListenableBuilder<Box<RecordingEntry>>(
+                          valueListenable: Hive.box<RecordingEntry>(
+                            recordingsBoxName,
+                          ).listenable(),
+                          builder: (context, box, _) {
+                            final allRecordings = box.values.toList()
+                              ..sort(
+                                (a, b) =>
+                                    b.dateRecorded.compareTo(a.dateRecorded),
                               );
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 5), // Adjusted from 15
-                    Expanded(
-                      child: ValueListenableBuilder<Box<RecordingEntry>>(
-                        valueListenable: Hive.box<RecordingEntry>(
-                          recordingsBoxName,
-                        ).listenable(),
-                        builder: (context, box, _) {
-                          final allRecordings = box.values.toList()
-                            ..sort(
-                              (a, b) =>
-                                  b.dateRecorded.compareTo(a.dateRecorded),
+                            final recentRecordings = allRecordings
+                                .take(2)
+                                .toList();
+                            return RecordingsListView(
+                              onTranscribe: _transcribeWithLemonFox,
+                              onShare: _showShareOptionsDialog,
+                              onMoveToVault: _moveToVault,
+                              recordingsBoxListenable: Hive.box<RecordingEntry>(
+                                recordingsBoxName,
+                              ).listenable(),
+                              currentFilters: _currentFilters,
+                              onTogglePlay: _togglePlayRecordingItem,
+                              onDismissRecording: _handleDismissRecording,
+                              currentlyPlayingFileId: _currentlyPlayingFileId,
+                              currentPlaybackProgress: _currentPlaybackProgress,
+                              currentTotalDuration: _currentTotalDuration,
+                              onSeekRequest: _handleSeek,
+                              showOnlyRecent: true,
                             );
-                          final recentRecordings = allRecordings
-                              .take(2)
-                              .toList();
-                          return RecordingsListView(
-                            onTranscribe: _transcribeWithLemonFox,
-                            onShare: _showShareOptionsDialog,
-                            onMoveToVault: _moveToVault,
-                            recordingsBoxListenable: Hive.box<RecordingEntry>(
-                              recordingsBoxName,
-                            ).listenable(),
-                            currentFilters: _currentFilters,
-                            onTogglePlay: _togglePlayRecordingItem,
-                            onDismissRecording: _handleDismissRecording,
-                            currentlyPlayingFileId: _currentlyPlayingFileId,
-                            currentPlaybackProgress: _currentPlaybackProgress,
-                            currentTotalDuration: _currentTotalDuration,
-                            onSeekRequest: _handleSeek,
-                            showOnlyRecent: true,
-                          );
-                        },
+                          },
+                        ),
                       ),
-                    ),
-                  ],
-                );
-              },
+                    ],
+                  );
+                },
+              ),
             ),
           ),
         );

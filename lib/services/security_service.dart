@@ -7,11 +7,17 @@ enum AuthMethod { None, Passcode, Biometrics }
 class SecurityService with ChangeNotifier {
   final LocalAuthentication _localAuth = LocalAuthentication();
   AuthMethod _authMethod = AuthMethod.None;
-  bool _isLocked = true;
   String? _savedPasscode;
 
+  // Use ValueNotifier for clean, efficient UI updates.
+  // The app should always start in an unlocked state.
+  final ValueNotifier<bool> isLocked = ValueNotifier(false);
+
+  // For grace period logic
+  DateTime? _pausedTime;
+  static const int _gracePeriodSeconds = 2; // 2-second grace period
+
   AuthMethod get authMethod => _authMethod;
-  bool get isLocked => _isLocked;
 
   SecurityService() {
     _loadSettings();
@@ -19,14 +25,11 @@ class SecurityService with ChangeNotifier {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    final methodIndex = prefs.getInt('authMethod') ?? 0;
+    final methodIndex = prefs.getInt('authMethod') ?? AuthMethod.None.index;
     _authMethod = AuthMethod.values[methodIndex];
     _savedPasscode = prefs.getString('passcode');
 
-    // If no security is set, the app is unlocked by default.
-    if (_authMethod == AuthMethod.None) {
-      _isLocked = false;
-    }
+    // We no longer need to set the lock state here; it defaults to false.
     notifyListeners();
   }
 
@@ -44,31 +47,49 @@ class SecurityService with ChangeNotifier {
       _savedPasscode = null;
     }
 
-    // When changing settings, unlock the app to prevent being locked out.
-    unlockApp();
+    // When changing settings, ensure the app is unlocked.
+    isLocked.value = false;
     notifyListeners();
   }
 
+  // --- Lifecycle Methods (to be called from main.dart) ---
+  void didPause() {
+    // Record the time when the app is paused, if locking is enabled.
+    if (authMethod != AuthMethod.None) {
+      _pausedTime = DateTime.now();
+    }
+  }
+
+  void didResume() {
+    // On resume, check if the grace period has passed.
+    if (authMethod != AuthMethod.None && _pausedTime != null) {
+      final elapsed = DateTime.now().difference(_pausedTime!).inSeconds;
+      if (elapsed > _gracePeriodSeconds) {
+        lockApp();
+      }
+      _pausedTime = null; // Reset the timer
+    }
+  }
+
   Future<bool> canUseBiometrics() async {
-    return await _localAuth.canCheckBiometrics &&
-        await _localAuth.isDeviceSupported();
+    try {
+      return await _localAuth.canCheckBiometrics &&
+          await _localAuth.isDeviceSupported();
+    } catch (e) {
+      debugPrint("Error checking biometrics support: $e");
+      return false;
+    }
   }
 
   Future<bool> authenticate() async {
-    if (_authMethod == AuthMethod.Biometrics) {
-      return await _authenticateWithBiometrics();
+    if (_authMethod != AuthMethod.Biometrics || !await canUseBiometrics()) {
+      return false;
     }
-    // Passcode authentication will be handled by a dedicated screen.
-    return false;
-  }
-
-  Future<bool> _authenticateWithBiometrics() async {
-    if (!await canUseBiometrics()) return false;
     try {
       return await _localAuth.authenticate(
         localizedReason: 'Please authenticate to access your recordings',
         options: const AuthenticationOptions(
-          stickyAuth: true, // Keep auth prompt open on app switch
+          stickyAuth: true,
           biometricOnly: true,
         ),
       );
@@ -83,16 +104,14 @@ class SecurityService with ChangeNotifier {
   }
 
   void lockApp() {
-    if (_authMethod != AuthMethod.None && !_isLocked) {
-      _isLocked = true;
-      notifyListeners();
+    if (authMethod != AuthMethod.None && !isLocked.value) {
+      isLocked.value = true;
     }
   }
 
   void unlockApp() {
-    if (_isLocked) {
-      _isLocked = false;
-      notifyListeners();
+    if (isLocked.value) {
+      isLocked.value = false;
     }
   }
 }

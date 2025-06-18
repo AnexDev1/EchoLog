@@ -28,7 +28,7 @@ class CategorySelectorWidget extends StatefulWidget {
     this.selectedCategoryData,
     required this.onCategorySelected,
     required this.isRecording,
-    this.maxItemsBeforeVerticalScroll = 8, // After 5 items, make it scrollable
+    this.maxItemsBeforeVerticalScroll = 10, // After 5 items, make it scrollable
     this.scrollHeightWhenWrapped = 150.0, // Height of the scrollable area
   });
 

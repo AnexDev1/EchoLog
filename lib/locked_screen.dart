@@ -25,14 +25,19 @@ class _LockScreenState extends State<LockScreen>
       duration: const Duration(milliseconds: 500),
       vsync: this,
     );
+    // Define the animation once here instead of in the build method
     _animation = Tween<Offset>(
-      begin: Offset.zero,
-      end: Offset.zero,
+      begin: const Offset(-0.05, 0.0),
+      end: const Offset(0.05, 0.0),
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.elasticIn));
 
-    // Attempt biometric auth immediately when the screen loads
+    // FIX: Add a small delay to ensure the screen is visible before auth
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _tryBiometricAuth();
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted) {
+          _tryBiometricAuth();
+        }
+      });
     });
   }
 
@@ -48,6 +53,7 @@ class _LockScreenState extends State<LockScreen>
       context,
       listen: false,
     );
+    // Only attempt biometrics if it's the selected method
     if (securityService.authMethod == AuthMethod.Biometrics) {
       final didAuthenticate = await securityService.authenticate();
       if (didAuthenticate && mounted) {
@@ -101,12 +107,6 @@ class _LockScreenState extends State<LockScreen>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final securityService = context.watch<SecurityService>();
-
-    // Define the shake animation
-    _animation = Tween<Offset>(
-      begin: const Offset(-0.05, 0.0),
-      end: const Offset(0.05, 0.0),
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.elasticIn));
 
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,

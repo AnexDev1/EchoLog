@@ -45,13 +45,17 @@ Future<void> main() async {
   await Hive.openBox<RecordingEntry>(hiddenRecordingsBoxName);
   await Hive.openBox<String>(appSettingsBoxName);
 
+  // Pre-initialize the security service to load its settings
+  final securityService = SecurityService();
+
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => StreakProvider()),
         ChangeNotifierProvider(create: (_) => PlaybackProvider()),
-        ChangeNotifierProvider(create: (_) => SecurityService()),
+        // Use .value for the pre-initialized service
+        ChangeNotifierProvider.value(value: securityService),
       ],
       child: const MyApp(),
     ),
@@ -92,9 +96,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       context,
       listen: false,
     );
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
-      securityService.lockApp();
+    // Use the new grace period logic from the service
+    if (state == AppLifecycleState.paused) {
+      securityService.didPause();
+    } else if (state == AppLifecycleState.resumed) {
+      securityService.didResume();
     }
   }
 
@@ -247,6 +253,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    // Get the service once here. No need to listen in the build method itself.
+    final securityService = Provider.of<SecurityService>(
+      context,
+      listen: false,
+    );
+
     return MaterialApp(
       navigatorKey: _navigatorKey,
       title: 'Echolog',
@@ -254,13 +266,22 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       darkTheme: AppThemes.darkTheme,
       themeMode: context.watch<ThemeProvider>().themeMode,
       debugShowCheckedModeBanner: false,
-      home: Consumer<SecurityService>(
-        builder: (context, security, _) {
-          if (security.isLocked) {
-            return const LockScreen();
-          }
-          return const HomeScreen();
+      home: ValueListenableBuilder<bool>(
+        // Listen directly to the isLocked notifier for efficiency
+        valueListenable: securityService.isLocked,
+        builder: (context, isLocked, child) {
+          // Use a Stack to overlay the LockScreen
+          return Stack(
+            children: [
+              // The main app (HomeScreen) is the child, built only once
+              child!,
+              // Conditionally show the LockScreen on top
+              if (isLocked) const LockScreen(),
+            ],
+          );
         },
+        // This is the child that the builder will receive
+        child: const HomeScreen(),
       ),
     );
   }
