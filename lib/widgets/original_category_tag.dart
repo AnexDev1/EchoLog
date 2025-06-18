@@ -180,7 +180,7 @@ class _OriginalCategoryTagState extends State<OriginalCategoryTag>
                 widget.name,
                 textAlign: TextAlign.center,
                 style: GoogleFonts.poppins(
-                  color: widget.contentColor,
+                  color: Colors.white,
                   fontWeight: widget.isSelected
                       ? FontWeight.bold
                       : FontWeight.w500,

@@ -6,7 +6,6 @@ import 'package:echolog/widgets/mini_waveform_painter.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
-// ...existing imports...
 
 class RecordingCard extends StatefulWidget {
   final RecordingEntry recording;
@@ -18,7 +17,7 @@ class RecordingCard extends StatefulWidget {
   final VoidCallback? onMoveToVault;
   final VoidCallback? onViewTranscription;
   final VoidCallback? onHideTranscription;
-  final VoidCallback? onShowTranscription; // <-- NEW
+  final VoidCallback? onShowTranscription;
   final bool isPlaying;
   final bool isSelected;
   final VoidCallback? onSelect;
@@ -38,7 +37,7 @@ class RecordingCard extends StatefulWidget {
     this.onMoveToVault,
     this.onViewTranscription,
     this.onHideTranscription,
-    this.onShowTranscription, // <-- NEW
+    this.onShowTranscription,
     required this.isPlaying,
     this.isSelected = false,
     this.onSelect,
@@ -101,6 +100,67 @@ class _RecordingCardState extends State<RecordingCard>
     } else {
       return "$twoDigitMinutes:$twoDigitSeconds";
     }
+  }
+
+  void _showDeleteConfirmationDialog(BuildContext context) {
+    final theme = Theme.of(context);
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          backgroundColor: theme.colorScheme.surface,
+          title: Text(
+            "Delete Recording?",
+            style: GoogleFonts.poppins(
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurface,
+            ),
+          ),
+          content: Text(
+            "Are you sure you want to permanently delete \"${widget.recording.displayName}\"?\n\nThis action cannot be undone.",
+            style: GoogleFonts.poppins(
+              color: theme.colorScheme.onSurface.withOpacity(0.8),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: Text(
+                "Cancel",
+                style: GoogleFonts.poppins(
+                  fontWeight: FontWeight.w500,
+                  color: theme.colorScheme.onSurface.withOpacity(0.8),
+                ),
+              ),
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.red.shade400,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: Text(
+                "Delete",
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w500),
+              ),
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                if (widget.onDelete != null) {
+                  widget.onDelete!();
+                }
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -232,7 +292,7 @@ class _RecordingCardState extends State<RecordingCard>
                           widget.onEdit!();
                         }
                         if (value == 'delete' && widget.onDelete != null) {
-                          widget.onDelete!();
+                          _showDeleteConfirmationDialog(context);
                         }
                         if (value == 'share' && widget.onShare != null) {
                           widget.onShare!();
@@ -379,7 +439,6 @@ class _RecordingCardState extends State<RecordingCard>
                 ],
               ),
               const SizedBox(height: 4),
-
               if (transcriptionTextToShow.isNotEmpty)
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -419,7 +478,6 @@ class _RecordingCardState extends State<RecordingCard>
                 )
               else
                 const SizedBox.shrink(),
-
               if (waveformData.isNotEmpty)
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
@@ -471,7 +529,6 @@ class _RecordingCardState extends State<RecordingCard>
                 ),
               if (waveformData.isEmpty && transcriptionTextToShow.isEmpty)
                 const SizedBox(height: 6),
-
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.center,

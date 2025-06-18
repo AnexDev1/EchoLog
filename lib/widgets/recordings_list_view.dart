@@ -16,6 +16,7 @@ class RecordingsListView extends StatefulWidget {
   final Function(RecordingEntry) onShare;
   final Function(RecordingEntry) onMoveToVault;
   final Function(RecordingEntry)? onViewTranscription;
+  final bool showOnlyRecent;
 
   // For seek functionality on mini waveforms within RecordingCards
   final Duration
@@ -39,6 +40,7 @@ class RecordingsListView extends StatefulWidget {
     required this.currentPlaybackProgress,
     required this.currentTotalDuration,
     this.onSeekRequest,
+    this.showOnlyRecent = false,
   });
 
   @override
@@ -47,8 +49,7 @@ class RecordingsListView extends StatefulWidget {
 
 class _RecordingsListViewState extends State<RecordingsListView> {
   List<RecordingEntry> _filterAndSortRecordings(Box<RecordingEntry> box) {
-    var recordings = box.values
-        .toList(); // Removed .where((entry) => !entry.isVaulted)
+    var recordings = box.values.toList();
 
     // Apply filters
     if (widget.currentFilters.moodName != null &&
@@ -83,6 +84,11 @@ class _RecordingsListViewState extends State<RecordingsListView> {
 
     // Apply sorting: Newest recordings on top
     recordings.sort((a, b) => b.dateRecorded.compareTo(a.dateRecorded));
+
+    // Only show the 2 most recent if requested
+    if (widget.showOnlyRecent) {
+      recordings = recordings.take(2).toList();
+    }
 
     return recordings;
   }
@@ -139,68 +145,26 @@ class _RecordingsListViewState extends State<RecordingsListView> {
             final bool displayAsPlaying =
                 isSelectedForPlayback && entry.isPlaying;
 
-            return Dismissible(
-              key: ValueKey('dismissible_${entry.id}'),
-              direction: DismissDirection.endToStart,
-              onDismissed: (direction) {
-                widget.onDismissRecording(entry);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text("${entry.displayName} deleted"),
-                    action: SnackBarAction(
-                      label: "Undo",
-                      onPressed: () {
-                        // TODO: Implement undo logic if desired, e.g., re-add to box
-                      },
-                    ),
-                  ),
-                );
-              },
-              background: Container(
-                color: Colors.redAccent.withOpacity(0.9),
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                alignment: Alignment.centerRight,
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Icon(
-                      Icons.delete_sweep_outlined,
-                      color: Colors.white,
-                      size: 28,
-                    ),
-                    SizedBox(width: 8),
-                    Text(
-                      "Delete",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
-                  ],
-                ),
+            return RecordingCard(
+              key: ValueKey(
+                'recording_card_${entry.id}_${entry.moodColor.value}_$displayAsPlaying',
               ),
-              child: RecordingCard(
-                key: ValueKey(
-                  'recording_card_${entry.id}_${entry.moodColor.value}_$displayAsPlaying',
-                ),
-                recording: entry,
-                isPlaying: displayAsPlaying,
-                onPlayToggle: () =>
-                    widget.onTogglePlay(entry, filteredAndSortedRecordings),
-                onShare: () => widget.onShare(entry),
-                onTranscribe: () => widget.onTranscribe(entry),
-                onMoveToVault: () => widget.onMoveToVault(entry),
-                onDelete: () => widget.onDismissRecording(entry),
-                onViewTranscription: widget.onViewTranscription != null
-                    ? () => widget.onViewTranscription!(entry)
-                    : null,
-                playbackProgressPercent: progressPercentForThisCard,
-                onSeekRequest:
-                    isSelectedForPlayback && widget.onSeekRequest != null
-                    ? widget.onSeekRequest
-                    : null,
-              ),
+              recording: entry,
+              isPlaying: displayAsPlaying,
+              onPlayToggle: () =>
+                  widget.onTogglePlay(entry, filteredAndSortedRecordings),
+              onShare: () => widget.onShare(entry),
+              onTranscribe: () => widget.onTranscribe(entry),
+              onMoveToVault: () => widget.onMoveToVault(entry),
+              onDelete: () => widget.onDismissRecording(entry),
+              onViewTranscription: widget.onViewTranscription != null
+                  ? () => widget.onViewTranscription!(entry)
+                  : null,
+              playbackProgressPercent: progressPercentForThisCard,
+              onSeekRequest:
+                  isSelectedForPlayback && widget.onSeekRequest != null
+                  ? widget.onSeekRequest
+                  : null,
             );
           },
         );

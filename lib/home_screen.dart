@@ -10,6 +10,7 @@ import 'package:echolog/models/filter_state.dart';
 import 'package:echolog/models/recording_entry.dart';
 import 'package:echolog/providers/playback_provider.dart';
 import 'package:echolog/providers/streak_provider.dart';
+import 'package:echolog/recordings_list_page.dart';
 import 'package:echolog/services/password_service.dart';
 import 'package:echolog/services/recording_service.dart';
 import 'package:echolog/settings_screen.dart';
@@ -911,6 +912,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
     final box = Hive.box<RecordingEntry>(recordingsBoxName);
     await box.put(newEntry.id, newEntry);
+    Provider.of<StreakProvider>(context, listen: false).onNewRecording();
+
     try {
       await updateWidgetWithRecentRecording(recentEntry: newEntry);
     } catch (e) {
@@ -1241,17 +1244,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             _resetGreetingToDynamic();
                           }
                         },
-                        child: FadeTransition(
-                          opacity: _greetingFadeAnim,
-                          child: Center(
-                            child: Text(
-                              _currentGreeting ?? _cachedDynamicGreeting ?? '',
-                              // Use the greeting from DynamicGreetingService
-                              textAlign: TextAlign.center,
-                              style: GoogleFonts.poppins(
-                                fontSize: 26,
-                                fontWeight: FontWeight.w600,
-                                color: theme.colorScheme.onBackground,
+                        child: SizedBox(
+                          height: 72,
+                          child: FadeTransition(
+                            opacity: _greetingFadeAnim,
+                            child: Center(
+                              child: Text(
+                                _currentGreeting ??
+                                    _cachedDynamicGreeting ??
+                                    '',
+                                // Use the greeting from DynamicGreetingService
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.poppins(
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w600,
+                                  color: theme.colorScheme.onBackground,
+                                ),
                               ),
                             ),
                           ),
@@ -1291,7 +1299,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            'Your Recordings',
+                            'Recent Recordings',
                             style: GoogleFonts.poppins(
                               fontSize: 20,
                               fontWeight: FontWeight.w600,
@@ -1300,41 +1308,65 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           ),
                           IconButton(
                             icon: Icon(
-                              _currentFilters.isAnyFilterActive
-                                  ? Icons.filter_alt_rounded
-                                  : Icons.filter_alt_off_outlined,
-                              color: _currentFilters.isAnyFilterActive
-                                  ? theme.colorScheme.primary
-                                  : theme.colorScheme.onBackground.withOpacity(
-                                      0.7,
-                                    ),
+                              Icons.arrow_forward_ios_rounded,
+                              color: theme.colorScheme.primary,
                             ),
-                            tooltip: 'Filter Recordings',
-                            onPressed: () =>
-                                _showAdvancedFilterSheet(allDisplayCategories),
+                            tooltip: 'View All Recordings',
+                            onPressed: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => RecordingsListPage(
+                                    onTranscribe: _transcribeWithLemonFox,
+                                    onShare: _showShareOptionsDialog,
+                                    onMoveToVault: _moveToVault,
+                                    onTogglePlay: _togglePlayRecordingItem,
+                                    onDismissRecording: _handleDismissRecording,
+                                    currentlyPlayingFileId:
+                                        _currentlyPlayingFileId,
+                                    currentPlaybackProgress:
+                                        _currentPlaybackProgress,
+                                    currentTotalDuration: _currentTotalDuration,
+                                    onSeekRequest: _handleSeek,
+                                  ),
+                                ),
+                              );
+                            },
                           ),
                         ],
                       ),
                     ),
                     const SizedBox(height: 5), // Adjusted from 15
                     Expanded(
-                      child: RecordingsListView(
-                        onTranscribe: _transcribeWithLemonFox,
-                        onShare: _showShareOptionsDialog,
-                        onMoveToVault: _moveToVault,
-                        // onViewTranscription is not implemented in this snippet, add if needed
-                        recordingsBoxListenable: Hive.box<RecordingEntry>(
+                      child: ValueListenableBuilder<Box<RecordingEntry>>(
+                        valueListenable: Hive.box<RecordingEntry>(
                           recordingsBoxName,
                         ).listenable(),
-                        currentFilters: _currentFilters,
-                        onTogglePlay: _togglePlayRecordingItem,
-                        onDismissRecording: _handleDismissRecording,
-                        currentlyPlayingFileId: _currentlyPlayingFileId,
-                        // Pass progress and seek handler for mini waveforms in cards
-                        currentPlaybackProgress: _currentPlaybackProgress,
-                        currentTotalDuration: _currentTotalDuration,
-                        onSeekRequest: _handleSeek,
-                        // Reuse the same seek handler
+                        builder: (context, box, _) {
+                          final allRecordings = box.values.toList()
+                            ..sort(
+                              (a, b) =>
+                                  b.dateRecorded.compareTo(a.dateRecorded),
+                            );
+                          final recentRecordings = allRecordings
+                              .take(2)
+                              .toList();
+                          return RecordingsListView(
+                            onTranscribe: _transcribeWithLemonFox,
+                            onShare: _showShareOptionsDialog,
+                            onMoveToVault: _moveToVault,
+                            recordingsBoxListenable: Hive.box<RecordingEntry>(
+                              recordingsBoxName,
+                            ).listenable(),
+                            currentFilters: _currentFilters,
+                            onTogglePlay: _togglePlayRecordingItem,
+                            onDismissRecording: _handleDismissRecording,
+                            currentlyPlayingFileId: _currentlyPlayingFileId,
+                            currentPlaybackProgress: _currentPlaybackProgress,
+                            currentTotalDuration: _currentTotalDuration,
+                            onSeekRequest: _handleSeek,
+                            showOnlyRecent: true,
+                          );
+                        },
                       ),
                     ),
                   ],
