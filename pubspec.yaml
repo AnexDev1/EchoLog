@@ -29,6 +29,7 @@ dependencies:
   file_picker: ^10.2.0
   archive: ^4.0.7
   sticky_grouped_list: ^3.1.0
+  local_auth: ^2.3.0
 
 
 dev_dependencies:

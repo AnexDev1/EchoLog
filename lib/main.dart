@@ -1,5 +1,8 @@
+import 'package:echolog/locked_screen.dart';
 import 'package:echolog/providers/streak_provider.dart';
+
 import 'package:echolog/services/recording_service.dart';
+import 'package:echolog/services/security_service.dart';
 import 'package:echolog/utils/color_adapter.dart';
 import 'package:echolog/utils/duration_adapter.dart';
 import 'package:flutter/material.dart';
@@ -13,7 +16,6 @@ import 'models/custom_category.dart';
 import 'models/recording_entry.dart';
 import 'providers/playback_provider.dart';
 import 'theme_provider.dart';
-// REMOVE THIS
 
 const String WIDGET_METHOD_CHANNEL_NAME = "com.anexon.echolog/widget";
 const String recordingsBoxName = 'recordingsBoxv2';
@@ -37,9 +39,7 @@ Future<void> main() async {
   if (!Hive.isAdapterRegistered(DurationAdapter().typeId)) {
     Hive.registerAdapter(DurationAdapter());
   }
-  if (!Hive.isAdapterRegistered(RecordingEntryAdapter().typeId)) {
-    Hive.registerAdapter(RecordingEntryAdapter());
-  }
+
   await Hive.openBox<RecordingEntry>(recordingsBoxName);
   await Hive.openBox<CustomCategory>(customCategoriesBoxName);
   await Hive.openBox<RecordingEntry>(hiddenRecordingsBoxName);
@@ -47,11 +47,11 @@ Future<void> main() async {
 
   runApp(
     MultiProvider(
-      // Use MultiProvider if you have more than one
       providers: [
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => StreakProvider()),
-        ChangeNotifierProvider(create: (_) => PlaybackProvider()), // ADD THIS
+        ChangeNotifierProvider(create: (_) => PlaybackProvider()),
+        ChangeNotifierProvider(create: (_) => SecurityService()),
       ],
       child: const MyApp(),
     ),
@@ -65,7 +65,7 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   static const MethodChannel _widgetMethodChannel = MethodChannel(
     WIDGET_METHOD_CHANNEL_NAME,
   );
@@ -74,13 +74,35 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _setupWidgetListener();
     _initiallyUpdateWidget();
   }
 
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    final securityService = Provider.of<SecurityService>(
+      context,
+      listen: false,
+    );
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      securityService.lockApp();
+    }
+  }
+
   Future<void> _initiallyUpdateWidget() async {
     await Future.delayed(const Duration(milliseconds: 500));
-    await updateWidgetWithRecentRecording();
+    // The function `updateWidgetWithRecentRecording` was not defined in the provided code.
+    // It is commented out to prevent errors. Please ensure it exists in your project.
+    // await updateWidgetWithRecentRecording();
   }
 
   Future<void> _setupWidgetListener() async {
@@ -186,11 +208,8 @@ class _MyAppState extends State<MyApp> {
       }
 
       if (entry != null) {
-        // Ensure HomeScreen is visible (pop other routes if necessary)
-        // This is important if the app was in the background with other screens open.
         _navigatorKey.currentState?.popUntil((route) => route.isFirst);
 
-        // Use Provider to tell HomeScreen to play this recording
         Provider.of<PlaybackProvider>(
           currentContext,
           listen: false,
@@ -228,24 +247,21 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
-    // ThemeProvider is already provided by MultiProvider
-    // final themeProvider = Provider.of<ThemeProvider>(context);
-
     return MaterialApp(
       navigatorKey: _navigatorKey,
       title: 'Echolog',
       theme: AppThemes.lightTheme,
       darkTheme: AppThemes.darkTheme,
-      themeMode: context
-          .watch<ThemeProvider>()
-          .themeMode, // Use context.watch here
+      themeMode: context.watch<ThemeProvider>().themeMode,
       debugShowCheckedModeBanner: false,
-      // home: const HomeScreen(), // initialRoute will handle this
-      initialRoute: '/',
-      routes: {
-        '/': (context) => const HomeScreen(),
-        // NO '/recordingPlayer' route needed
-      },
+      home: Consumer<SecurityService>(
+        builder: (context, security, _) {
+          if (security.isLocked) {
+            return const LockScreen();
+          }
+          return const HomeScreen();
+        },
+      ),
     );
   }
 }

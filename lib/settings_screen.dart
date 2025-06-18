@@ -1,5 +1,5 @@
-// Ensure correct path
-import 'package:echolog/services/data_exporter_service.dart'; // Added for DataExporter
+import 'package:echolog/services/data_exporter_service.dart';
+import 'package:echolog/services/security_service.dart'; // Ensure correct path
 import 'package:echolog/theme_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -26,13 +26,31 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   HiddenAccessTriggerMethod _selectedHiddenAccessMethod =
       HiddenAccessTriggerMethod.longPressAppBar;
-  bool _isExporting = false; // To manage loading state for export
-  bool _isImporting = false; // To manage loading state for import
+  bool _isExporting = false;
+  bool _isImporting = false;
+  bool _canUseBiometrics = false; // For security settings
 
   @override
   void initState() {
     super.initState();
     _loadHiddenAccessPreference();
+    _checkBiometrics(); // Check for biometrics support
+  }
+
+  Future<void> _checkBiometrics() async {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final securityService = Provider.of<SecurityService>(
+        context,
+        listen: false,
+      );
+      final canUse = await securityService.canUseBiometrics();
+      if (mounted) {
+        setState(() {
+          _canUseBiometrics = canUse;
+        });
+      }
+    });
   }
 
   Future<void> _loadHiddenAccessPreference() async {
@@ -123,6 +141,118 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     });
   }
+
+  // --- Security Methods ---
+  Future<String?> _showSetPasscodeDialog() async {
+    final passcodeController = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Set a 4-Digit PIN',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+        content: TextField(
+          controller: passcodeController,
+          keyboardType: TextInputType.number,
+          maxLength: 4,
+          obscureText: true,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Enter PIN',
+            counterText: '',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (passcodeController.text.length == 4) {
+                Navigator.pop(context, passcodeController.text);
+              }
+            },
+            child: const Text('Set PIN'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool?> _showVerifyPasscodeDialog(
+    SecurityService securityService,
+  ) async {
+    final passcodeController = TextEditingController();
+    String? errorText;
+
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text(
+                'Enter PIN to Disable',
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+              ),
+              content: TextField(
+                controller: passcodeController,
+                keyboardType: TextInputType.number,
+                maxLength: 4,
+                obscureText: true,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'Enter current PIN',
+                  counterText: '',
+                  errorText: errorText,
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    if (passcodeController.text.length == 4) {
+                      final isCorrect = securityService.checkPasscode(
+                        passcodeController.text,
+                      );
+                      if (isCorrect) {
+                        Navigator.pop(context, true);
+                      } else {
+                        setState(() {
+                          errorText = 'Incorrect PIN. Please try again.';
+                        });
+                        passcodeController.clear();
+                      }
+                    }
+                  },
+                  child: const Text('Confirm'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  String _getSecurityMethodDescription(AuthMethod method) {
+    switch (method) {
+      case AuthMethod.None:
+        return 'Disabled. The app will not be locked.';
+      case AuthMethod.Passcode:
+        return 'Enabled using Passcode.';
+      case AuthMethod.Biometrics:
+        return 'Enabled using Biometrics & Passcode.';
+    }
+  }
+  // --- End Security Methods ---
 
   void _showThemeSelectionDialog(ThemeProvider themeProvider) {
     showDialog<ThemeMode>(
@@ -293,12 +423,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     try {
       message = await exporter.importData();
-      // If importData returns 'Import cancelled...', it's not an error state for the SnackBar color
       if (message.startsWith('Import cancelled')) {
-        success =
-            false; // Or treat as neutral, but red is okay for "didn't happen"
+        success = false;
       } else {
-        success = true; // Indicates the import process itself ran.
+        success = true;
       }
     } catch (e) {
       message =
@@ -317,9 +445,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SnackBar(
             content: Text(message, style: GoogleFonts.poppins()),
             backgroundColor: success ? Colors.green : Colors.red,
-            duration: Duration(
-              seconds: message.length > 100 ? 6 : 4,
-            ), // Longer for detailed messages
+            duration: Duration(seconds: message.length > 100 ? 6 : 4),
           ),
         );
       }
@@ -399,6 +525,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final themeProvider = Provider.of<ThemeProvider>(context);
+    final securityService = Provider.of<SecurityService>(
+      context,
+    ); // Get SecurityService
 
     return Scaffold(
       appBar: AppBar(
@@ -418,48 +547,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
             margin: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
             decoration: BoxDecoration(
               color: theme.cardTheme.color ?? theme.cardColor,
-              borderRadius: BorderRadius.circular(
-                theme.cardTheme.shape is RoundedRectangleBorder
-                    ? ((theme.cardTheme.shape as RoundedRectangleBorder)
-                                  .borderRadius
-                              as BorderRadius)
-                          .topLeft
-                          .x
-                    : 12.0,
-              ),
-              boxShadow:
-                  theme.cardTheme.elevation != null &&
-                      theme.cardTheme.elevation! > 0
-                  ? [
-                      BoxShadow(
-                        color: theme.shadowColor.withOpacity(0.1),
-                        blurRadius: theme.cardTheme.elevation! * 2,
-                        offset: Offset(0, theme.cardTheme.elevation!),
-                      ),
-                    ]
-                  : [],
+              borderRadius: BorderRadius.circular(12.0),
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(
-                theme.cardTheme.shape is RoundedRectangleBorder
-                    ? ((theme.cardTheme.shape as RoundedRectangleBorder)
-                                  .borderRadius
-                              as BorderRadius)
-                          .topLeft
-                          .x
-                    : 12.0,
+              borderRadius: BorderRadius.circular(12.0),
+              child: _buildSettingsItem(
+                icon: Icons.touch_app_outlined,
+                title: 'Access Method',
+                subtitle: _getHiddenAccessMethodDescription(
+                  _selectedHiddenAccessMethod,
+                ),
+                onTap: _showHiddenAccessMethodSelectionDialog,
               ),
-              child: Column(
-                children: [
-                  _buildSettingsItem(
-                    icon: Icons.touch_app_outlined,
-                    title: 'Access Method',
-                    subtitle: _getHiddenAccessMethodDescription(
-                      _selectedHiddenAccessMethod,
-                    ),
-                    onTap: _showHiddenAccessMethodSelectionDialog,
-                  ),
-                ],
+            ),
+          ),
+
+          _buildSettingsSectionTitle(context, 'SECURITY'),
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
+            decoration: BoxDecoration(
+              color: theme.cardTheme.color ?? theme.cardColor,
+              borderRadius: BorderRadius.circular(12.0),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12.0),
+              child: _buildSettingsItem(
+                icon: Icons.lock_outline,
+                title: 'App Lock',
+                subtitle: _getSecurityMethodDescription(
+                  securityService.authMethod,
+                ),
+                trailing: Switch(
+                  value: securityService.authMethod != AuthMethod.None,
+                  onChanged: (bool value) async {
+                    if (value) {
+                      // Turning ON
+                      final passcode = await _showSetPasscodeDialog();
+                      if (passcode != null) {
+                        final method = _canUseBiometrics
+                            ? AuthMethod.Biometrics
+                            : AuthMethod.Passcode;
+                        securityService.setAuthMethod(
+                          method,
+                          passcode: passcode,
+                        );
+                      }
+                    } else {
+                      // Turning OFF
+                      final didVerify = await _showVerifyPasscodeDialog(
+                        securityService,
+                      );
+                      if (didVerify == true) {
+                        securityService.setAuthMethod(AuthMethod.None);
+                      }
+                    }
+                  },
+                ),
               ),
             ),
           ),
@@ -469,37 +612,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             margin: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
             decoration: BoxDecoration(
               color: theme.cardTheme.color ?? theme.cardColor,
-              borderRadius: BorderRadius.circular(
-                theme.cardTheme.shape is RoundedRectangleBorder
-                    ? ((theme.cardTheme.shape as RoundedRectangleBorder)
-                                  .borderRadius
-                              as BorderRadius)
-                          .topLeft
-                          .x
-                    : 12.0,
-              ),
-              boxShadow:
-                  theme.cardTheme.elevation != null &&
-                      theme.cardTheme.elevation! > 0
-                  ? [
-                      BoxShadow(
-                        color: theme.shadowColor.withOpacity(0.1),
-                        blurRadius: theme.cardTheme.elevation! * 2,
-                        offset: Offset(0, theme.cardTheme.elevation!),
-                      ),
-                    ]
-                  : [],
+              borderRadius: BorderRadius.circular(12.0),
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(
-                theme.cardTheme.shape is RoundedRectangleBorder
-                    ? ((theme.cardTheme.shape as RoundedRectangleBorder)
-                                  .borderRadius
-                              as BorderRadius)
-                          .topLeft
-                          .x
-                    : 12.0,
-              ),
+              borderRadius: BorderRadius.circular(12.0),
               child: Column(
                 children: [
                   _buildSettingsItem(
@@ -540,37 +656,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             margin: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
             decoration: BoxDecoration(
               color: theme.cardTheme.color ?? theme.cardColor,
-              borderRadius: BorderRadius.circular(
-                theme.cardTheme.shape is RoundedRectangleBorder
-                    ? ((theme.cardTheme.shape as RoundedRectangleBorder)
-                                  .borderRadius
-                              as BorderRadius)
-                          .topLeft
-                          .x
-                    : 12.0,
-              ),
-              boxShadow:
-                  theme.cardTheme.elevation != null &&
-                      theme.cardTheme.elevation! > 0
-                  ? [
-                      BoxShadow(
-                        color: theme.shadowColor.withOpacity(0.1),
-                        blurRadius: theme.cardTheme.elevation! * 2,
-                        offset: Offset(0, theme.cardTheme.elevation!),
-                      ),
-                    ]
-                  : [],
+              borderRadius: BorderRadius.circular(12.0),
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(
-                theme.cardTheme.shape is RoundedRectangleBorder
-                    ? ((theme.cardTheme.shape as RoundedRectangleBorder)
-                                  .borderRadius
-                              as BorderRadius)
-                          .topLeft
-                          .x
-                    : 12.0,
-              ),
+              borderRadius: BorderRadius.circular(12.0),
               child: Column(
                 children: [
                   _buildSettingsItem(
@@ -598,47 +687,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             margin: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
             decoration: BoxDecoration(
               color: theme.cardTheme.color ?? theme.cardColor,
-              borderRadius: BorderRadius.circular(
-                theme.cardTheme.shape is RoundedRectangleBorder
-                    ? ((theme.cardTheme.shape as RoundedRectangleBorder)
-                                  .borderRadius
-                              as BorderRadius)
-                          .topLeft
-                          .x
-                    : 12.0,
-              ),
-              boxShadow:
-                  theme.cardTheme.elevation != null &&
-                      theme.cardTheme.elevation! > 0
-                  ? [
-                      BoxShadow(
-                        color: theme.shadowColor.withOpacity(0.1),
-                        blurRadius: theme.cardTheme.elevation! * 2,
-                        offset: Offset(0, theme.cardTheme.elevation!),
-                      ),
-                    ]
-                  : [],
+              borderRadius: BorderRadius.circular(12.0),
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(
-                theme.cardTheme.shape is RoundedRectangleBorder
-                    ? ((theme.cardTheme.shape as RoundedRectangleBorder)
-                                  .borderRadius
-                              as BorderRadius)
-                          .topLeft
-                          .x
-                    : 12.0,
-              ),
-              child: Column(
-                children: [
-                  _buildSettingsItem(
-                    icon: Icons.info_outline,
-                    title: 'App Version',
-                    subtitle: '1.0.0', // Replace with dynamic version later
-                    trailing: const SizedBox.shrink(),
-                    onTap: null,
-                  ),
-                ],
+              borderRadius: BorderRadius.circular(12.0),
+              child: _buildSettingsItem(
+                icon: Icons.info_outline,
+                title: 'App Version',
+                subtitle: '1.0.0', // Replace with dynamic version later
+                trailing: const SizedBox.shrink(),
+                onTap: null,
               ),
             ),
           ),
