@@ -41,6 +41,10 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
   FilterState _currentFilters = FilterState();
   final TextEditingController _searchController = TextEditingController();
 
+  // State for bulk selection
+  bool _isSelectionMode = false;
+  final Set<String> _selectedRecordingIds = {};
+
   @override
   void initState() {
     super.initState();
@@ -60,6 +64,109 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
     _searchController.dispose();
     super.dispose();
   }
+
+  // --- Selection Mode Logic ---
+
+  void _enterSelectionMode(String recordingId) {
+    setState(() {
+      _isSelectionMode = true;
+      _selectedRecordingIds.add(recordingId);
+    });
+  }
+
+  void _exitSelectionMode() {
+    setState(() {
+      _isSelectionMode = false;
+      _selectedRecordingIds.clear();
+    });
+  }
+
+  void _toggleSelection(String recordingId) {
+    setState(() {
+      if (_selectedRecordingIds.contains(recordingId)) {
+        _selectedRecordingIds.remove(recordingId);
+      } else {
+        _selectedRecordingIds.add(recordingId);
+      }
+      if (_selectedRecordingIds.isEmpty) {
+        _isSelectionMode = false;
+      }
+    });
+  }
+
+  void _performBulkDelete() {
+    final box = Hive.box<RecordingEntry>(HiveBoxNames.recordingsBoxName);
+    final entriesToDelete = _selectedRecordingIds
+        .map((id) => box.get(id))
+        .where((entry) => entry != null)
+        .toList();
+
+    for (final entry in entriesToDelete) {
+      widget.onDismissRecording(entry!);
+    }
+
+    _exitSelectionMode();
+  }
+
+  void _showBulkDeleteConfirmationDialog() {
+    final theme = Theme.of(context);
+    final count = _selectedRecordingIds.length;
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          backgroundColor: theme.colorScheme.surface,
+          title: Text(
+            "Delete $count ${count == 1 ? 'Recording' : 'Recordings'}?",
+            style: GoogleFonts.poppins(
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurface,
+            ),
+          ),
+          content: Text(
+            "Are you sure you want to permanently delete these recordings?\n\nThis action cannot be undone.",
+            style: GoogleFonts.poppins(
+              color: theme.colorScheme.onSurface.withOpacity(0.8),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: Text(
+                "Cancel",
+                style: GoogleFonts.poppins(
+                  fontWeight: FontWeight.w500,
+                  color: theme.colorScheme.onSurface.withOpacity(0.8),
+                ),
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.red.shade400,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: Text(
+                "Delete",
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w500),
+              ),
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                _performBulkDelete();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // --- End Selection Mode Logic ---
 
   void _showAdvancedFilterSheet(
     List<Map<String, dynamic>> allCategoriesForFilter,
@@ -175,8 +282,10 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
           final recordings = _getFilteredRecordings(box);
           return CustomScrollView(
             slivers: [
-              _buildDynamicAppBar(context, recordings.length),
-              if (recordings.isEmpty)
+              _isSelectionMode
+                  ? _buildSelectionAppBar(context)
+                  : _buildDynamicAppBar(context, recordings.length),
+              if (recordings.isEmpty && !_isSelectionMode)
                 SliverFillRemaining(
                   hasScrollBody: false,
                   child: _buildEmptyState(context),
@@ -190,6 +299,32 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
     );
   }
 
+  Widget _buildSelectionAppBar(BuildContext context) {
+    final theme = Theme.of(context);
+    return SliverAppBar(
+      pinned: true,
+      backgroundColor: theme.colorScheme.primary.withOpacity(0.1),
+      foregroundColor: theme.colorScheme.primary,
+      elevation: 1,
+      leading: IconButton(
+        icon: const Icon(Icons.close),
+        onPressed: _exitSelectionMode,
+        tooltip: "Cancel Selection",
+      ),
+      title: Text(
+        '${_selectedRecordingIds.length} selected',
+        style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+      ),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.delete_outline_rounded),
+          onPressed: _showBulkDeleteConfirmationDialog,
+          tooltip: "Delete Selected",
+        ),
+      ],
+    );
+  }
+
   Widget _buildDynamicAppBar(BuildContext context, int count) {
     final theme = Theme.of(context);
     return SliverAppBar(
@@ -199,9 +334,8 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
       backgroundColor: theme.colorScheme.surface,
       foregroundColor: theme.colorScheme.onSurface,
       elevation: 0.5,
-      // This is the title that appears when the app bar is collapsed
       title: Text(
-        'All Recordings', // <-- CORRECTED TEXT
+        'All Recordings',
         style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 18),
       ),
       flexibleSpace: FlexibleSpaceBar(
@@ -285,7 +419,7 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
                 ),
               ],
             ),
-            const SizedBox(height: 16), // Padding at the bottom
+            const SizedBox(height: 16),
           ],
         ),
       ),
@@ -336,9 +470,7 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
     Map<String, List<RecordingEntry>> grouped = {};
     for (var entry in recordings) {
       String header = _formatDateHeader(entry.dateRecorded);
-      if (grouped[header] == null) {
-        grouped[header] = [];
-      }
+      if (grouped[header] == null) grouped[header] = [];
       grouped[header]!.add(entry);
     }
 
@@ -362,7 +494,8 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
             ),
             ...groupItems.map((entry) {
               final isSelectedForPlayback =
-                  widget.currentlyPlayingFileId == entry.id;
+                  widget.currentlyPlayingFileId == entry.id &&
+                  !_isSelectionMode;
               double progress = 0.0;
               if (isSelectedForPlayback &&
                   widget.currentTotalDuration.inMilliseconds > 0) {
@@ -374,14 +507,30 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
               return Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: RecordingCard(
-                  key: ValueKey('card_${entry.id}_${isSelectedForPlayback}'),
+                  key: ValueKey('card_${entry.id}'),
                   recording: entry,
                   isPlaying: isSelectedForPlayback && entry.isPlaying,
-                  onPlayToggle: () => widget.onTogglePlay(entry, recordings),
-                  onShare: () => widget.onShare(entry),
-                  onTranscribe: () => widget.onTranscribe(entry),
-                  onMoveToVault: () => widget.onMoveToVault(entry),
-                  onDelete: () => widget.onDismissRecording(entry),
+                  isSelected: _selectedRecordingIds.contains(entry.id),
+                  onSelect: () => _isSelectionMode
+                      ? _toggleSelection(entry.id)
+                      : widget.onTogglePlay(entry, recordings),
+                  onLongPress: () =>
+                      !_isSelectionMode ? _enterSelectionMode(entry.id) : null,
+                  onPlayToggle: () => _isSelectionMode
+                      ? _toggleSelection(entry.id)
+                      : widget.onTogglePlay(entry, recordings),
+                  onShare: _isSelectionMode
+                      ? null
+                      : () => widget.onShare(entry),
+                  onTranscribe: _isSelectionMode
+                      ? null
+                      : () => widget.onTranscribe(entry),
+                  onMoveToVault: _isSelectionMode
+                      ? null
+                      : () => widget.onMoveToVault(entry),
+                  onDelete: _isSelectionMode
+                      ? null
+                      : () => widget.onDismissRecording(entry),
                   playbackProgressPercent: progress,
                   onSeekRequest: isSelectedForPlayback
                       ? widget.onSeekRequest
