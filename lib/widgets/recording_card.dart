@@ -1,7 +1,6 @@
 import 'dart:math' as math;
 
 import 'package:echolog/models/recording_entry.dart';
-import 'package:echolog/widgets/animated_waveform_play_button.dart';
 import 'package:echolog/widgets/mini_waveform_painter.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -478,57 +477,27 @@ class _RecordingCardState extends State<RecordingCard>
                 )
               else
                 const SizedBox.shrink(),
+              // Restore the main mini waveform in the middle (above the Row)
               if (waveformData.isNotEmpty)
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTapDown: (details) {
-                    if (widget.onSeekRequest != null) {
-                      final RenderBox box =
-                          context.findRenderObject() as RenderBox;
-                      final localOffset = box.globalToLocal(
-                        details.globalPosition,
-                      );
-                      final seekPercent = (localOffset.dx / box.size.width)
-                          .clamp(0.0, 1.0);
-                      widget.onSeekRequest!(seekPercent);
-                    } else if (!widget.isPlaying) {
-                      widget.onPlayToggle();
-                    }
-                  },
-                  onHorizontalDragUpdate: (details) {
-                    if (widget.onSeekRequest != null) {
-                      final RenderBox box =
-                          context.findRenderObject() as RenderBox;
-                      final localOffset = box.globalToLocal(
-                        details.globalPosition,
-                      );
-                      final seekPercent = (localOffset.dx / box.size.width)
-                          .clamp(0.0, 1.0);
-                      widget.onSeekRequest!(seekPercent);
-                    }
-                  },
-                  child: Container(
-                    height: 30.0,
-                    margin: EdgeInsets.only(
-                      top: (transcriptionTextToShow.isNotEmpty) ? 6.0 : 2.0,
-                      bottom: 8.0,
-                    ),
-                    width: double.infinity,
-                    child: CustomPaint(
-                      painter: MiniWaveformPainter(
-                        waveformData: waveformData,
-                        waveColor: baseWaveColor,
-                        strokeWidth: 3,
-                        progressPercent: widget.playbackProgressPercent,
-                        progressColor: progressWaveColor,
-                        thumbColor: thumbWaveColor,
-                        isAnimating: widget.isPlaying,
-                      ),
+                Container(
+                  height: 30.0,
+                  margin: EdgeInsets.only(
+                    top: (transcriptionTextToShow.isNotEmpty) ? 6.0 : 2.0,
+                    bottom: 8.0,
+                  ),
+                  width: double.infinity,
+                  child: CustomPaint(
+                    painter: MiniWaveformPainter(
+                      waveformData: waveformData,
+                      waveColor: baseWaveColor,
+                      strokeWidth: 3,
+                      progressPercent: widget.playbackProgressPercent,
+                      progressColor: progressWaveColor,
+                      thumbColor: thumbWaveColor,
+                      isAnimating: widget.isPlaying,
                     ),
                   ),
                 ),
-              if (waveformData.isEmpty && transcriptionTextToShow.isEmpty)
-                const SizedBox(height: 6),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -566,12 +535,16 @@ class _RecordingCardState extends State<RecordingCard>
                     ),
                   ),
                   const SizedBox(width: 8),
-                  AnimatedWaveformPlayButton(
-                    isPlaying: widget.isPlaying,
-                    onTap: widget.onPlayToggle,
-                    activeColor: widget.recording.moodColor,
-                    inactiveColor: theme.hintColor.withOpacity(0.6),
-                    size: const Size(32, 32),
+                  IconButton(
+                    icon: Icon(
+                      widget.isPlaying
+                          ? Icons.pause_circle_filled
+                          : Icons.play_circle_filled,
+                      color: widget.recording.moodColor,
+                      size: 32,
+                    ),
+                    onPressed: widget.onPlayToggle,
+                    tooltip: widget.isPlaying ? 'Pause' : 'Play',
                   ),
                 ],
               ),

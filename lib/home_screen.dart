@@ -664,6 +664,36 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       );
       return;
     }
+    // Check if password is set before moving
+    final hasPassword = await _passwordService.hasPassword();
+    if (!hasPassword) {
+      // Prompt user to set password first
+      showCustomSnackBar(
+        context: context,
+        message: 'Set up a vault password before moving recordings.',
+        iconColor: Colors.orange,
+        duration: const Duration(seconds: 3),
+      );
+      // Optionally, open the password setup dialog here
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext dialogContext) => CreatePasswordDialog(
+          passwordService: _passwordService,
+          onPasswordSet: (bool passwordCreated) {
+            if (passwordCreated && mounted) {
+              showCustomSnackBar(
+                context: context,
+                message: "Password set! Now move your recording to the vault.",
+                iconColor: Colors.green,
+                duration: const Duration(seconds: 3),
+              );
+            }
+          },
+        ),
+      );
+      return;
+    }
     final hiddenBox = Hive.box<RecordingEntry>(hiddenRecordingsBoxName);
     if (hiddenBox.containsKey(entryToMove.id)) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -675,20 +705,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       );
       return;
     }
-
-    // // Ensure isPlaying is false and isVaulted is true for the entry being moved
-    // final RecordingEntry entryForVault = entryToMove.copyWith(
-    //   isVaulted: true,
-    //   isPlaying: false, // Explicitly set isPlaying to false
-    //   // waveformPoints and summaryPreview are preserved by copyWith if they exist
-    // );
-
     try {
-      final recordingsBox = Hive.box<RecordingEntry>(
-        recordingsBoxName,
-      ); // Define recordingsBox
-      // await hiddenBox.put(entryForVault.id, entryForVault);
-      await recordingsBox.delete(entryToMove.id); // Delete from the main box
+      final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
+      await hiddenBox.put(entryToMove.id, entryToMove); // Save to vault first!
+      await recordingsBox.delete(entryToMove.id); // Then remove from main box
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1174,6 +1194,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       default:
         return appBarWidget;
     }
+  }
+
+  Widget _buildRecordingPlayPauseButton(RecordingEntry entry) {
+    final isPlaying =
+        _currentlyPlayingFileId == entry.id && (_player?.isPlaying ?? false);
+    return IconButton(
+      icon: Icon(
+        isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
+        color: Theme.of(context).colorScheme.primary,
+        size: 32,
+      ),
+      onPressed: () => _togglePlayRecordingItem(entry, [entry]),
+      tooltip: isPlaying ? 'Pause' : 'Play',
+    );
   }
 
   @override
