@@ -53,9 +53,24 @@ class _FilterBottomSheetWidgetState extends State<FilterBottomSheetWidget> {
         const Duration(days: 365),
       ), // Allow picking future dates if relevant, or just DateTime.now()
       builder: (context, child) {
+        final theme = Theme.of(context);
+        final isDark = theme.brightness == Brightness.dark;
         return Theme(
-          data: Theme.of(context).copyWith(
-            // Customize picker theme if needed
+          data: theme.copyWith(
+            colorScheme: theme.colorScheme.copyWith(
+              primary: theme.colorScheme.primary,
+              onPrimary: isDark ? Colors.white : Colors.black,
+              surface: isDark ? theme.colorScheme.surface : Colors.white,
+              onSurface: isDark ? Colors.white : Colors.black,
+              background: isDark ? theme.colorScheme.background : Colors.white,
+            ),
+            dialogBackgroundColor: isDark
+                ? theme.colorScheme.surface
+                : Colors.white,
+            textTheme: theme.textTheme.apply(
+              bodyColor: isDark ? Colors.white : Colors.black,
+              displayColor: isDark ? Colors.white : Colors.black,
+            ),
           ),
           child: child!,
         );

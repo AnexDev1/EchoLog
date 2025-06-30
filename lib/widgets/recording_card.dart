@@ -1,7 +1,6 @@
-import 'dart:math' as math;
+import 'dart:async';
 
 import 'package:echolog/models/recording_entry.dart';
-import 'package:echolog/widgets/mini_waveform_painter.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
@@ -26,7 +25,7 @@ class RecordingCard extends StatefulWidget {
   final bool isOut;
 
   const RecordingCard({
-    super.key,
+    required Key key,
     required this.recording,
     required this.onPlayToggle,
     this.onEdit,
@@ -44,49 +43,37 @@ class RecordingCard extends StatefulWidget {
     this.playbackProgressPercent = 0.0,
     this.onSeekRequest,
     this.isOut = false,
-  });
+  }) : super(key: key);
 
   @override
   State<RecordingCard> createState() => _RecordingCardState();
 }
 
-class _RecordingCardState extends State<RecordingCard>
-    with TickerProviderStateMixin {
+class _RecordingCardState extends State<RecordingCard> {
   bool _isTranscriptionExpanded = false;
   bool _isTranscriptionHidden = false;
-  late AnimationController _animationController;
 
   @override
   void initState() {
     super.initState();
-    _animationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1500),
-    );
-    if (widget.isPlaying) {
-      _animationController.repeat();
-    }
+    // No PlayerController needed for progress bar
   }
 
   @override
   void didUpdateWidget(RecordingCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.isPlaying != oldWidget.isPlaying) {
-      if (widget.isPlaying) {
-        if (!_animationController.isAnimating) {
-          _animationController.repeat();
-        }
-      } else {
-        if (_animationController.isAnimating) {
-          _animationController.stop();
-        }
-      }
-    }
+    // If you want to handle play/pause, do it via _playerController methods.
+    // Example:
+    // if (widget.isPlaying && !oldWidget.isPlaying) {
+    //   _playerController.startPlayer();
+    // } else if (!widget.isPlaying && oldWidget.isPlaying) {
+    //   _playerController.pausePlayer();
+    // }
   }
 
   @override
   void dispose() {
-    _animationController.dispose();
+    // No PlayerController to dispose
     super.dispose();
   }
 
@@ -168,16 +155,7 @@ class _RecordingCardState extends State<RecordingCard>
     final DateFormat dateFormat = DateFormat('MMM d, yyyy');
     final DateFormat timeFormat = DateFormat('h:mm a');
 
-    final List<double> waveformData =
-        widget.recording.waveformPoints ??
-        List.generate(
-          50,
-          (index) =>
-              (math.sin(index * 0.3 + math.Random().nextDouble() * 0.5) + 1) /
-                  2.2 +
-              0.05,
-        ).map((e) => e.clamp(0.05, 1.0)).toList();
-
+    // Removed waveformData and math usage
     final String? summaryPreview = widget.recording.summaryPreview;
     final String? fullTranscription = widget.recording.transcription;
     final bool hasFullTranscription =
@@ -213,15 +191,6 @@ class _RecordingCardState extends State<RecordingCard>
         canExpand = false;
       }
     }
-
-    final Color baseWaveColor = widget.recording.moodColor.withOpacity(0.65);
-    final Color progressWaveColor = widget.recording.moodColor;
-    final Color thumbWaveColor = HSLColor.fromColor(widget.recording.moodColor)
-        .withLightness(
-          (HSLColor.fromColor(widget.recording.moodColor).lightness - 0.1)
-              .clamp(0.0, 1.0),
-        )
-        .toColor();
 
     Duration elapsedDuration = Duration.zero;
     if (widget.playbackProgressPercent > 0) {
@@ -444,25 +413,7 @@ class _RecordingCardState extends State<RecordingCard>
                   children: [
                     Padding(
                       padding: const EdgeInsets.only(bottom: 4.0, top: 2.0),
-                      child: SelectableText(
-                        transcriptionTextToShow,
-                        style:
-                            GoogleFonts.poppins(
-                              fontSize: 12.5,
-                              color: _isTranscriptionExpanded
-                                  ? theme.colorScheme.onSurfaceVariant
-                                  : theme.hintColor.withOpacity(0.9),
-                              fontStyle: !_isTranscriptionExpanded && hasSummary
-                                  ? FontStyle.italic
-                                  : FontStyle.normal,
-                            ).copyWith(
-                              overflow: _isTranscriptionExpanded
-                                  ? TextOverflow.visible
-                                  : TextOverflow.ellipsis,
-                            ),
-                        maxLines: _isTranscriptionExpanded
-                            ? null
-                            : collapsedPreviewMaxLines,
+                      child: GestureDetector(
                         onTap: canExpand
                             ? () {
                                 setState(() {
@@ -471,33 +422,53 @@ class _RecordingCardState extends State<RecordingCard>
                                 });
                               }
                             : null,
+                        child: Text(
+                          transcriptionTextToShow,
+                          style: GoogleFonts.poppins(
+                            fontSize: 12.5,
+                            color: _isTranscriptionExpanded
+                                ? theme.colorScheme.onSurfaceVariant
+                                : theme.hintColor.withOpacity(0.9),
+                            fontStyle: !_isTranscriptionExpanded && hasSummary
+                                ? FontStyle.italic
+                                : FontStyle.normal,
+                          ),
+                          maxLines: _isTranscriptionExpanded
+                              ? null
+                              : collapsedPreviewMaxLines,
+                          overflow: _isTranscriptionExpanded
+                              ? TextOverflow.visible
+                              : TextOverflow.ellipsis,
+                        ),
                       ),
                     ),
                   ],
                 )
               else
                 const SizedBox.shrink(),
-              // Restore the main mini waveform in the middle (above the Row)
-              if (waveformData.isNotEmpty)
-                Container(
-                  height: 30.0,
-                  margin: EdgeInsets.only(
-                    top: (transcriptionTextToShow.isNotEmpty) ? 6.0 : 2.0,
-                    bottom: 8.0,
+              // Main mini waveform
+              SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 6.0,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 8.0,
                   ),
-                  width: double.infinity,
-                  child: CustomPaint(
-                    painter: MiniWaveformPainter(
-                      waveformData: waveformData,
-                      waveColor: baseWaveColor,
-                      strokeWidth: 3,
-                      progressPercent: widget.playbackProgressPercent,
-                      progressColor: progressWaveColor,
-                      thumbColor: thumbWaveColor,
-                      isAnimating: widget.isPlaying,
-                    ),
+                  overlayShape: const RoundSliderOverlayShape(
+                    overlayRadius: 16.0,
                   ),
+                  activeTrackColor: widget.recording.moodColor,
+                  inactiveTrackColor: widget.recording.moodColor.withOpacity(
+                    0.25,
+                  ),
+                  thumbColor: widget.recording.moodColor,
                 ),
+                child: Slider(
+                  min: 0.0,
+                  max: 1.0,
+                  value: widget.playbackProgressPercent.clamp(0.0, 1.0),
+                  onChanged: widget.onSeekRequest,
+                ),
+              ),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -506,14 +477,14 @@ class _RecordingCardState extends State<RecordingCard>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        dateFormat.format(widget.recording.dateRecorded),
+                        timeFormat.format(widget.recording.dateRecorded),
                         style: GoogleFonts.poppins(
                           fontSize: 11.5,
                           color: theme.hintColor.withOpacity(0.85),
                         ),
                       ),
                       Text(
-                        timeFormat.format(widget.recording.dateRecorded),
+                        dateFormat.format(widget.recording.dateRecorded),
                         style: GoogleFonts.poppins(
                           fontSize: 11.5,
                           color: theme.hintColor.withOpacity(0.85),

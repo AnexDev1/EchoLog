@@ -88,7 +88,6 @@ class _AddCategoryDialogState extends State<AddCategoryDialog> {
           child: MaterialPicker(
             pickerColor: pickerColor,
             onColorChanged: (color) => pickerColor = color,
-            enableLabel: true,
           ),
         ),
         actionsAlignment: MainAxisAlignment.end,
@@ -285,8 +284,8 @@ class _AddCategoryDialogState extends State<AddCategoryDialog> {
                   ),
                   const SizedBox(width: 16),
                   Text(
-                    // Simpler text for color field
-                    'Selected Color',
+                    // Show hex code for color, e.g. #FF5733
+                    '#${_selectedColor.value.toRadixString(16).padLeft(8, '0').toUpperCase().substring(2)}',
                     style: GoogleFonts.poppins(
                       color: theme.colorScheme.onSurface.withOpacity(0.8),
                       fontSize: 15,

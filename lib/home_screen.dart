@@ -1210,6 +1210,31 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  void _handleStartOrStopRecording() {
+    _startOrStopRecording();
+  }
+
+  // Helper to safely get category name
+  String _safeCategoryName(Map<String, dynamic>? category) {
+    if (category == null) return '';
+    final name = category['name'];
+    return (name is String && name.trim().isNotEmpty) ? name : '';
+  }
+
+  // Helper to safely get category emoji
+  String _safeCategoryEmoji(Map<String, dynamic>? category) {
+    if (category == null) return '';
+    final emoji = category['emoji'];
+    return (emoji is String && emoji.trim().isNotEmpty) ? emoji : '';
+  }
+
+  // Helper to safely get category color
+  Color _safeCategoryColor(Map<String, dynamic>? category) {
+    if (category == null) return Colors.grey;
+    final color = category['color'];
+    return (color is Color) ? color : Colors.grey;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -1277,7 +1302,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   Map<String, dynamic>? controlsCategoryData =
                       _selectedCategoryData;
                   if (_currentlyPlayingEntry != null) {
-                    // If an audio track is loaded/playing
                     controlsCategoryData = {
                       'name': _currentlyPlayingEntry!.moodName,
                       'emoji': _currentlyPlayingEntry!.moodEmoji,
@@ -1286,12 +1310,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     };
                   }
 
-                  // Define greeting here
-                  final box = Hive.box<RecordingEntry>(recordingsBoxName);
-                  final lastRecording = box.isNotEmpty ? box.values.last : null;
-                  final greeting = DynamicGreetingService.getGreeting(
-                    now: DateTime.now(),
-                    lastRecording: lastRecording,
+                  // Use safe helpers for greeting display
+                  final greetingText =
+                      _currentGreeting ?? _cachedDynamicGreeting ?? '';
+                  final safeCategoryName = _safeCategoryName(
+                    _selectedCategoryData,
+                  );
+                  final safeCategoryEmoji = _safeCategoryEmoji(
+                    _selectedCategoryData,
                   );
 
                   return Column(
@@ -1300,7 +1326,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       Center(
                         child: GestureDetector(
                           onTap: () {
-                            // If mood-aware greeting is showing, revert to dynamic on tap
                             if (_currentGreeting != null) {
                               _resetGreetingToDynamic();
                             }
@@ -1311,10 +1336,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               opacity: _greetingFadeAnim,
                               child: Center(
                                 child: Text(
-                                  _currentGreeting ??
-                                      _cachedDynamicGreeting ??
-                                      '',
-                                  // Use the greeting from DynamicGreetingService
+                                  greetingText.isNotEmpty
+                                      ? greetingText
+                                      : (safeCategoryEmoji.isNotEmpty ||
+                                                safeCategoryName.isNotEmpty
+                                            ? '${safeCategoryEmoji.isNotEmpty ? safeCategoryEmoji + ' ' : ''}${safeCategoryName}'
+                                            : ''),
                                   textAlign: TextAlign.center,
                                   style: GoogleFonts.poppins(
                                     fontSize: 26,
@@ -1335,7 +1362,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         isRecording: _isRecording,
                         onCategorySelected: _onCategorySelected,
                       ),
-                      const SizedBox(height: 20), // Adjusted spacing from 40
+                      const SizedBox(height: 20),
                       Center(
                         child: RecordingControlsWidget(
                           waveformColor: Colors.red,
@@ -1343,9 +1370,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           isRecordingPaused: _isRecordingPaused,
                           recordingDuration: _recordingDuration,
                           selectedCategoryData:
-                              controlsCategoryData, // Dynamic category for color
+                              controlsCategoryData ??
+                              {
+                                'name': 'Category',
+                                'emoji': '',
+                                'color': Colors.grey,
+                                'iconColor': Colors.grey.shade200,
+                              },
                           isRecorderInitialized: _isRecorderInitialized,
-                          onStartStopRecording: _startOrStopRecording,
+                          onStartStopRecording:
+                              (_selectedCategoryData == null ||
+                                  (_player?.isPlaying ?? false))
+                              ? () {}
+                              : _handleStartOrStopRecording,
                           onTogglePausePlayRecording: _togglePausePlayRecording,
 
                           // Props for the interactive waveform (main controls)
@@ -1428,6 +1465,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               currentTotalDuration: _currentTotalDuration,
                               onSeekRequest: _handleSeek,
                               showOnlyRecent: true,
+                              isActuallyPlaying:
+                                  _player?.isPlaying ??
+                                  false, // <-- Pass correct value
                             );
                           },
                         ),

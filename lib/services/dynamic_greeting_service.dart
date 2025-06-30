@@ -64,6 +64,10 @@ class DynamicGreetingService {
     String? mood = lastRecording?.moodName;
     String? emoji = lastRecording?.moodEmoji;
 
+    // Use safe fallbacks for mood and emoji
+    final safeMood = (mood != null && mood.trim().isNotEmpty) ? mood : '';
+    final safeEmoji = (emoji != null && emoji.trim().isNotEmpty) ? emoji : '';
+
     // Time-based base greetings
     String baseGreeting;
     if (isMorning) {
@@ -305,28 +309,29 @@ class DynamicGreetingService {
       // ...add even more for a "big db" feel!
     ];
 
-    if (mood != null && emoji != null) {
+    // Only use moodGreetings if both mood and emoji are non-empty
+    if (safeMood.isNotEmpty && safeEmoji.isNotEmpty) {
       moodGreetings = [
-        "$baseGreeting! Last time you felt $mood $emoji.",
-        "$baseGreeting! How’s your $mood $emoji mood today?",
-        "$baseGreeting! Recording another $mood $emoji moment?",
-        "$baseGreeting! Hope your $mood $emoji continues.",
-        "$baseGreeting! Let’s talk about your $mood $emoji today.",
-        "$baseGreeting! Remember when you felt $mood $emoji?",
-        "$baseGreeting! $mood $emoji was your last vibe.",
-        "$baseGreeting! Echoing your $mood $emoji energy.",
-        "$baseGreeting! Will today be another $mood $emoji day?",
-        "$baseGreeting! Your last mood was $mood $emoji. How about now?",
-        "$baseGreeting! $mood $emoji is a powerful feeling.",
-        "$baseGreeting! Let's see if $mood $emoji returns today.",
-        "$baseGreeting! $mood $emoji left a mark last time.",
-        "$baseGreeting! $mood $emoji is still echoing.",
-        "$baseGreeting! $mood $emoji was your last chapter.",
-        "$baseGreeting! $mood $emoji—what a mood!",
-        "$baseGreeting! $mood $emoji, again or something new?",
-        "$baseGreeting! $mood $emoji, let's talk about it.",
-        "$baseGreeting! $mood $emoji, your story continues.",
-        "$baseGreeting! $mood $emoji, let's echo that.",
+        "$baseGreeting! Last time you felt $safeMood $safeEmoji.",
+        "$baseGreeting! How’s your $safeMood $safeEmoji mood today?",
+        "$baseGreeting! Recording another $safeMood $safeEmoji moment?",
+        "$baseGreeting! Hope your $safeMood $safeEmoji continues.",
+        "$baseGreeting! Let’s talk about your $safeMood $safeEmoji today.",
+        "$baseGreeting! Remember when you felt $safeMood $safeEmoji?",
+        "$baseGreeting! $safeMood $safeEmoji was your last vibe.",
+        "$baseGreeting! Echoing your $safeMood $safeEmoji energy.",
+        "$baseGreeting! Will today be another $safeMood $safeEmoji day?",
+        "$baseGreeting! Your last mood was $safeMood $safeEmoji. How about now?",
+        "$baseGreeting! $safeMood $safeEmoji is a powerful feeling.",
+        "$baseGreeting! Let's see if $safeMood $safeEmoji returns today.",
+        "$baseGreeting! $safeMood $safeEmoji left a mark last time.",
+        "$baseGreeting! $safeMood $safeEmoji is still echoing.",
+        "$baseGreeting! $safeMood $safeEmoji was your last chapter.",
+        "$baseGreeting! $safeMood $safeEmoji—what a mood!",
+        "$baseGreeting! $safeMood $safeEmoji, again or something new?",
+        "$baseGreeting! $safeMood $safeEmoji, let's talk about it.",
+        "$baseGreeting! $safeMood $safeEmoji, your story continues.",
+        "$baseGreeting! $safeMood $safeEmoji, let's echo that.",
         // ...add more mood-based for variety!
       ];
     }
@@ -335,13 +340,23 @@ class DynamicGreetingService {
     final today = DateFormat('EEEE').format(now);
     if (today == "Monday") {
       genericGreetings.add("New week, new thoughts! Happy Monday!");
-      moodGreetings.add("New week, new $mood $emoji? Happy Monday!");
+      if (safeMood.isNotEmpty && safeEmoji.isNotEmpty) {
+        moodGreetings.add("New week, new $safeMood $safeEmoji? Happy Monday!");
+      }
     } else if (today == "Friday") {
       genericGreetings.add("It's Friday! Got weekend plans to record?");
-      moodGreetings.add("It's Friday! Will $mood $emoji be your weekend vibe?");
+      if (safeMood.isNotEmpty && safeEmoji.isNotEmpty) {
+        moodGreetings.add(
+          "It's Friday! Will $safeMood $safeEmoji be your weekend vibe?",
+        );
+      }
     } else if (today == "Sunday") {
       genericGreetings.add("Sunday reflections: what’s on your mind?");
-      moodGreetings.add("Sunday $mood $emoji reflections: ready to share?");
+      if (safeMood.isNotEmpty && safeEmoji.isNotEmpty) {
+        moodGreetings.add(
+          "Sunday $safeMood $safeEmoji reflections: ready to share?",
+        );
+      }
     }
 
     // Pick a greeting based on the second, so it feels random and fresh

@@ -146,7 +146,9 @@ class RecordingControlsWidget extends StatelessWidget {
   ) {
     Color iconColorOnBar =
         selectedCategoryData?['iconColor'] as Color? ??
-        theme.colorScheme.primary;
+        (theme.brightness == Brightness.light
+            ? theme.colorScheme.onSurface
+            : theme.colorScheme.primary);
     Color durationTextColor = theme.colorScheme.onSurface;
 
     return Padding(

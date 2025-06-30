@@ -17,6 +17,7 @@ class RecordingsListView extends StatefulWidget {
   final Function(RecordingEntry) onMoveToVault;
   final Function(RecordingEntry)? onViewTranscription;
   final bool showOnlyRecent;
+  final bool isActuallyPlaying; // <-- Add this
 
   // For seek functionality on mini waveforms within RecordingCards
   final Duration
@@ -41,6 +42,7 @@ class RecordingsListView extends StatefulWidget {
     required this.currentTotalDuration,
     this.onSeekRequest,
     this.showOnlyRecent = false,
+    required this.isActuallyPlaying, // <-- Add this
   });
 
   @override
@@ -130,27 +132,27 @@ class _RecordingsListViewState extends State<RecordingsListView> {
           itemBuilder: (context, index) {
             final entry = filteredAndSortedRecordings[index];
 
-            final bool isSelectedForPlayback =
+            final bool isThisCardPlaying =
                 widget.currentlyPlayingFileId == entry.id;
-
+            final bool isActuallyPlaying = widget.isActuallyPlaying;
             double progressPercentForThisCard = 0.0;
-            if (isSelectedForPlayback &&
+            if (isThisCardPlaying &&
                 widget.currentTotalDuration.inMilliseconds > 0) {
               progressPercentForThisCard =
                   (widget.currentPlaybackProgress.inMilliseconds /
                           widget.currentTotalDuration.inMilliseconds)
                       .clamp(0.0, 1.0);
             }
-
-            final bool displayAsPlaying =
-                isSelectedForPlayback && entry.isPlaying;
-
             return RecordingCard(
               key: ValueKey(
-                'recording_card_${entry.id}_${entry.moodColor.value}_$displayAsPlaying',
+                'recording_card_${entry.id}_${entry.moodColor.value}_${isThisCardPlaying && isActuallyPlaying}',
               ),
               recording: entry,
-              isPlaying: displayAsPlaying,
+              isPlaying:
+                  isThisCardPlaying &&
+                  isActuallyPlaying, // Only animate and show pause icon if actually playing
+              isSelected:
+                  isThisCardPlaying, // Selected if this is the current card
               onPlayToggle: () =>
                   widget.onTogglePlay(entry, filteredAndSortedRecordings),
               onShare: () => widget.onShare(entry),
@@ -160,9 +162,10 @@ class _RecordingsListViewState extends State<RecordingsListView> {
               onViewTranscription: widget.onViewTranscription != null
                   ? () => widget.onViewTranscription!(entry)
                   : null,
-              playbackProgressPercent: progressPercentForThisCard,
-              onSeekRequest:
-                  isSelectedForPlayback && widget.onSeekRequest != null
+              playbackProgressPercent: isThisCardPlaying
+                  ? progressPercentForThisCard
+                  : 0.0,
+              onSeekRequest: isThisCardPlaying && widget.onSeekRequest != null
                   ? widget.onSeekRequest
                   : null,
             );
