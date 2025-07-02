@@ -1,36 +1,48 @@
 import 'package:echolog/hive_box_names.dart';
+import 'package:echolog/main.dart';
 import 'package:echolog/models/custom_category.dart';
 import 'package:echolog/models/filter_state.dart';
 import 'package:echolog/models/recording_entry.dart';
 import 'package:echolog/widgets/filter_bottom_sheet_widget.dart';
 import 'package:echolog/widgets/recording_card.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 
 class RecordingsListPage extends StatefulWidget {
-  final void Function(RecordingEntry) onTranscribe;
-  final void Function(RecordingEntry) onShare;
-  final void Function(RecordingEntry) onMoveToVault;
-  final void Function(RecordingEntry, List<RecordingEntry>) onTogglePlay;
-  final void Function(RecordingEntry) onDismissRecording;
+  final List<RecordingEntry> allRecordings;
+  final Function(RecordingEntry) onRecordingToggled;
+  final Function(double) onSeekRequest;
   final String? currentlyPlayingFileId;
-  final Duration currentPlaybackProgress;
-  final Duration currentTotalDuration;
-  final void Function(double) onSeekRequest;
+  final ValueNotifier<Duration> playbackProgress;
+  final Duration totalDuration;
+  final ValueNotifier<bool> isActuallyPlayingNotifier;
+  final Function(RecordingEntry) onDelete;
+  final Function(RecordingEntry) onShareFile;
+  final Function(RecordingEntry) onShareTranscription;
+  final Function(RecordingEntry, String) onRename;
+  final Function(RecordingEntry, List<String>) onEditCategories;
+  final Function(RecordingEntry) onToggleHidden;
+  final Function(RecordingEntry) onGenerateTranscription;
 
   const RecordingsListPage({
     super.key,
-    required this.onTranscribe,
-    required this.onShare,
-    required this.onMoveToVault,
-    required this.onTogglePlay,
-    required this.onDismissRecording,
-    required this.currentlyPlayingFileId,
-    required this.currentPlaybackProgress,
-    required this.currentTotalDuration,
+    required this.allRecordings,
+    required this.onRecordingToggled,
     required this.onSeekRequest,
+    this.currentlyPlayingFileId,
+    required this.playbackProgress,
+    required this.totalDuration,
+    required this.isActuallyPlayingNotifier,
+    required this.onDelete,
+    required this.onShareFile,
+    required this.onShareTranscription,
+    required this.onRename,
+    required this.onEditCategories,
+    required this.onToggleHidden,
+    required this.onGenerateTranscription,
   });
 
   @override
@@ -102,7 +114,7 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
         .toList();
 
     for (final entry in entriesToDelete) {
-      widget.onDismissRecording(entry!);
+      widget.onDelete(entry!);
     }
 
     _exitSelectionMode();
@@ -273,26 +285,34 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Professional fix: Always rebuild the list when playback progress changes, for real-time UI updates
     return Scaffold(
       body: ValueListenableBuilder<Box<RecordingEntry>>(
         valueListenable: Hive.box<RecordingEntry>(
-          HiveBoxNames.recordingsBoxName,
+          recordingsBoxName,
         ).listenable(),
         builder: (context, box, _) {
           final recordings = _getFilteredRecordings(box);
-          return CustomScrollView(
-            slivers: [
-              _isSelectionMode
-                  ? _buildSelectionAppBar(context)
-                  : _buildDynamicAppBar(context, recordings.length),
-              if (recordings.isEmpty && !_isSelectionMode)
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: _buildEmptyState(context),
-                )
-              else
-                _buildGroupedList(recordings),
-            ],
+          // NEW: Listen to the actual playing state
+          return ValueListenableBuilder<bool>(
+            valueListenable: widget.isActuallyPlayingNotifier,
+            builder: (context, isActuallyPlaying, __) {
+              // Listen to playback progress for real-time updates
+              return CustomScrollView(
+                slivers: [
+                  _isSelectionMode
+                      ? _buildSelectionAppBar(context)
+                      : _buildDynamicAppBar(context, recordings.length),
+                  if (recordings.isEmpty && !_isSelectionMode)
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: _buildEmptyState(context),
+                    )
+                  else
+                    _buildGroupedList(recordings),
+                ],
+              );
+            },
           );
         },
       ),
@@ -494,49 +514,70 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
             ),
             ...groupItems.map((entry) {
               final isSelectedForPlayback =
-                  widget.currentlyPlayingFileId == entry.id &&
-                  !_isSelectionMode;
-              double progress = 0.0;
-              if (isSelectedForPlayback &&
-                  widget.currentTotalDuration.inMilliseconds > 0) {
-                progress =
-                    (widget.currentPlaybackProgress.inMilliseconds /
-                            widget.currentTotalDuration.inMilliseconds)
-                        .clamp(0.0, 1.0);
-              }
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: RecordingCard(
-                  key: ValueKey('card_${entry.id}'),
-                  recording: entry,
-                  isPlaying: isSelectedForPlayback && entry.isPlaying,
-                  isSelected: _selectedRecordingIds.contains(entry.id),
-                  onSelect: () => _isSelectionMode
-                      ? _toggleSelection(entry.id)
-                      : widget.onTogglePlay(entry, recordings),
-                  onLongPress: () =>
-                      !_isSelectionMode ? _enterSelectionMode(entry.id) : null,
-                  onPlayToggle: () => _isSelectionMode
-                      ? _toggleSelection(entry.id)
-                      : widget.onTogglePlay(entry, recordings),
-                  onShare: _isSelectionMode
-                      ? null
-                      : () => widget.onShare(entry),
-                  onTranscribe: _isSelectionMode
-                      ? null
-                      : () => widget.onTranscribe(entry),
-                  onMoveToVault: _isSelectionMode
-                      ? null
-                      : () => widget.onMoveToVault(entry),
-                  onDelete: _isSelectionMode
-                      ? null
-                      : () => widget.onDismissRecording(entry),
-                  playbackProgressPercent: progress,
-                  onSeekRequest: isSelectedForPlayback
-                      ? widget.onSeekRequest
-                      : null,
-                ),
+                  widget.currentlyPlayingFileId == entry.id;
+              final isSelectedForBulk = _selectedRecordingIds.contains(
+                entry.id,
               );
+
+              // The card for the currently playing item needs to listen to progress
+              if (isSelectedForPlayback) {
+                return ValueListenableBuilder<Duration>(
+                  valueListenable: widget.playbackProgress,
+                  builder: (context, progress, _) {
+                    // Also listen to the play/pause state for real-time updates
+                    return ValueListenableBuilder<bool>(
+                      valueListenable: widget.isActuallyPlayingNotifier,
+                      builder: (context, isActuallyPlaying, __) {
+                        return RecordingCard(
+                          key: ValueKey('list_${entry.id}_playing'),
+                          recording: entry,
+                          isPlaying: isSelectedForPlayback && isActuallyPlaying,
+                          playbackProgressPercent:
+                              (widget.totalDuration.inMilliseconds > 0)
+                              ? progress.inMilliseconds /
+                                    widget.totalDuration.inMilliseconds
+                              : 0.0,
+                          onPlayToggle: () => widget.onRecordingToggled(entry),
+                          onSeekRequest: widget.onSeekRequest,
+                          onDelete: () => widget.onDelete(entry),
+                          onShare: () => widget.onShareFile(entry),
+                          onTranscribe: () =>
+                              widget.onGenerateTranscription(entry),
+                          onMoveToVault: () => widget.onToggleHidden(entry),
+                          onEdit: () =>
+                              widget.onRename(entry, entry.displayName),
+                          isSelected: isSelectedForBulk,
+                          onLongPress: () => _enterSelectionMode(entry.id),
+                          onSelect: _isSelectionMode
+                              ? () => _toggleSelection(entry.id)
+                              : null,
+                        );
+                      },
+                    );
+                  },
+                );
+              } else {
+                // Render a static card if it's not the one playing
+                return RecordingCard(
+                  key: ValueKey('list_${entry.id}_static'),
+                  recording: entry,
+                  isPlaying: false, // Not playing
+                  playbackProgressPercent: 0.0,
+                  onPlayToggle: () => widget.onRecordingToggled(entry),
+                  onSeekRequest:
+                      null, // No seeking if not the currently playing track
+                  onDelete: () => widget.onDelete(entry),
+                  onShare: () => widget.onShareFile(entry),
+                  onTranscribe: () => widget.onGenerateTranscription(entry),
+                  onMoveToVault: () => widget.onToggleHidden(entry),
+                  onEdit: () => widget.onRename(entry, entry.displayName),
+                  isSelected: isSelectedForBulk,
+                  onLongPress: () => _enterSelectionMode(entry.id),
+                  onSelect: _isSelectionMode
+                      ? () => _toggleSelection(entry.id)
+                      : null,
+                );
+              }
             }).toList(),
           ],
         );

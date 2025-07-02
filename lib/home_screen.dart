@@ -48,6 +48,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+  // Track which context controls playback: 'home' or 'list'
+  String _playbackContext = 'home';
   Map<String, dynamic>? _selectedCategoryData;
   bool _isTranscribingLemonFox = false;
   String? _currentGreeting;
@@ -105,7 +107,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   RecordingEntry?
   _currentlyPlayingEntry; // To access waveform points and mood color
   // For the main RecordingControlsWidget waveform
-  Duration _currentPlaybackProgress = Duration.zero;
+  ValueNotifier<Duration> _currentPlaybackProgress = ValueNotifier<Duration>(
+    Duration.zero,
+  );
+  final ValueNotifier<bool> _isActuallyPlayingNotifier = ValueNotifier<bool>(
+    false,
+  );
   Duration _currentTotalDuration = Duration.zero;
   StreamSubscription? _playerSubscription;
 
@@ -146,6 +153,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
     _greetingAnimController.value = 1.0;
     _updateDynamicGreetingIfNeeded(force: true);
+    // Ensure streak is loaded from persistent storage on startup
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        Provider.of<StreakProvider>(context, listen: false).initialize();
+      }
+    });
   }
 
   @override
@@ -212,7 +225,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             _currentlyPlayingFileId != null &&
             (_player?.isPlaying ?? false)) {
           setState(() {
-            _currentPlaybackProgress = e.position;
+            _currentPlaybackProgress.value = e.position;
             _currentTotalDuration =
                 e.duration; // Player provides total duration
           });
@@ -245,7 +258,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       await _player!.seekToPlayer(targetPosition);
       if (mounted) {
         // Optimistic UI update
-        setState(() => _currentPlaybackProgress = targetPosition);
+        setState(() => _currentPlaybackProgress.value = targetPosition);
       }
     }
   }
@@ -301,7 +314,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _currentlyPlayingEntry =
             null; // This will ensure cards reflect not playing
         // _currentTotalDuration = Duration.zero; // Optional: reset or keep last known
-        _currentPlaybackProgress = Duration.zero;
+        _currentPlaybackProgress.value = Duration.zero;
+        _isActuallyPlayingNotifier.value = false;
         // Any other UI state related to playback progress should be reset here
       });
     }
@@ -310,8 +324,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Future<void> _togglePlayRecordingItem(
     RecordingEntry entry,
     List<RecordingEntry>
-    currentList, // This parameter might be used for context or future features
-  ) async {
+    currentList, { // This parameter might be used for context or future features
+    String playbackContext = 'home',
+  }) async {
     if (!_isPlayerInitialized || _player == null) {
       showCustomSnackBar(
         context: context,
@@ -333,6 +348,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       // --- CASE 1: Target entry is PLAYING -> PAUSE it ---
       try {
         await _player!.pausePlayer();
+        _isActuallyPlayingNotifier.value = false;
         // Update the entry's state for persistence and local model consistency
         // The RecordingCard's isPlaying prop should primarily rely on _player.isPlaying
         final entryInBox = recordingsBox.get(entryId);
@@ -358,6 +374,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       // --- CASE 2: Target entry is PAUSED -> RESUME it ---
       try {
         await _player!.resumePlayer();
+        _isActuallyPlayingNotifier.value = true;
         final entryInBox = recordingsBox.get(entryId);
         if (entryInBox != null) {
           entryInBox.isPlaying = true;
@@ -406,10 +423,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           whenFinished: () {
             // This callback is crucial. Ensure it only acts if this specific track finished.
             if (_currentlyPlayingFileId == entryId) {
-              _stopPlaybackAndResetState();
+              _stopPlaybackAndResetState(); // This will set isActuallyPlaying to false
             }
           },
         );
+        _isActuallyPlayingNotifier.value = true;
 
         // Update state for the new playing entry
         final entryInBox = recordingsBox.get(entryId);
@@ -432,7 +450,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             // _currentlyPlayingEntry is already set above
             _currentTotalDuration =
                 _currentlyPlayingEntry?.duration ?? Duration.zero;
-            _currentPlaybackProgress =
+            _currentPlaybackProgress.value =
                 Duration.zero; // Reset progress for new track
           });
         }
@@ -707,7 +725,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
     try {
       final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
-      await hiddenBox.put(entryToMove.id, entryToMove); // Save to vault first!
+      // Create a copy of the entry to avoid Hive instance error
+      final entryCopy = RecordingEntry(
+        id: entryToMove.id,
+        filePath: entryToMove.filePath,
+        displayName: entryToMove.displayName,
+        duration: entryToMove.duration,
+        dateRecorded: entryToMove.dateRecorded,
+        moodName: entryToMove.moodName,
+        moodColor: entryToMove.moodColor,
+        moodIconColor: entryToMove.moodIconColor,
+        moodEmoji: entryToMove.moodEmoji,
+        transcription: entryToMove.transcription,
+        waveformPoints: entryToMove.waveformPoints,
+        summaryPreview: entryToMove.summaryPreview,
+        isPlaying: false,
+      );
+      await hiddenBox.put(entryToMove.id, entryCopy); // Save copy to vault
       await recordingsBox.delete(entryToMove.id); // Then remove from main box
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1324,30 +1358,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
                       Center(
-                        child: GestureDetector(
-                          onTap: () {
-                            if (_currentGreeting != null) {
-                              _resetGreetingToDynamic();
-                            }
-                          },
-                          child: SizedBox(
-                            height: 72,
-                            child: FadeTransition(
-                              opacity: _greetingFadeAnim,
-                              child: Center(
-                                child: Text(
-                                  greetingText.isNotEmpty
-                                      ? greetingText
-                                      : (safeCategoryEmoji.isNotEmpty ||
-                                                safeCategoryName.isNotEmpty
-                                            ? '${safeCategoryEmoji.isNotEmpty ? safeCategoryEmoji + ' ' : ''}${safeCategoryName}'
-                                            : ''),
-                                  textAlign: TextAlign.center,
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 26,
-                                    fontWeight: FontWeight.w600,
-                                    color: theme.colorScheme.onBackground,
-                                  ),
+                        child: SizedBox(
+                          height: 72,
+                          child: FadeTransition(
+                            opacity: _greetingFadeAnim,
+                            child: Center(
+                              child: Text(
+                                greetingText.isNotEmpty
+                                    ? greetingText
+                                    : (safeCategoryEmoji.isNotEmpty ||
+                                              safeCategoryName.isNotEmpty
+                                          ? '${safeCategoryEmoji.isNotEmpty ? safeCategoryEmoji + ' ' : ''}${safeCategoryName}'
+                                          : ''),
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.poppins(
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w600,
+                                  color: theme.colorScheme.onBackground,
                                 ),
                               ),
                             ),
@@ -1414,19 +1441,35 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                 Navigator.of(context).push(
                                   MaterialPageRoute(
                                     builder: (_) => RecordingsListPage(
-                                      onTranscribe: _transcribeWithLemonFox,
-                                      onShare: _showShareOptionsDialog,
-                                      onMoveToVault: _moveToVault,
-                                      onTogglePlay: _togglePlayRecordingItem,
-                                      onDismissRecording:
-                                          _handleDismissRecording,
+                                      allRecordings:
+                                          Hive.box<RecordingEntry>(
+                                            recordingsBoxName,
+                                          ).values.toList()..sort(
+                                            (a, b) => b.dateRecorded.compareTo(
+                                              a.dateRecorded,
+                                            ),
+                                          ),
+                                      onRecordingToggled: (entry) =>
+                                          _togglePlayRecordingItem(entry, [
+                                            entry,
+                                          ]),
+                                      playbackProgress:
+                                          _currentPlaybackProgress,
+                                      totalDuration: _currentTotalDuration,
                                       currentlyPlayingFileId:
                                           _currentlyPlayingFileId,
-                                      currentPlaybackProgress:
-                                          _currentPlaybackProgress,
-                                      currentTotalDuration:
-                                          _currentTotalDuration,
+                                      isActuallyPlayingNotifier:
+                                          _isActuallyPlayingNotifier,
                                       onSeekRequest: _handleSeek,
+                                      onDelete: _handleDismissRecording,
+                                      onShareFile: _shareRecordingFile,
+                                      onShareTranscription:
+                                          _shareTranscriptionText,
+                                      onRename: _handleRenameRecording,
+                                      onEditCategories: _handleEditCategories,
+                                      onToggleHidden: _moveToVault,
+                                      onGenerateTranscription:
+                                          _transcribeWithLemonFox,
                                     ),
                                   ),
                                 );
@@ -1461,7 +1504,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               onTogglePlay: _togglePlayRecordingItem,
                               onDismissRecording: _handleDismissRecording,
                               currentlyPlayingFileId: _currentlyPlayingFileId,
-                              currentPlaybackProgress: _currentPlaybackProgress,
+                              currentPlaybackProgress:
+                                  _currentPlaybackProgress.value,
                               currentTotalDuration: _currentTotalDuration,
                               onSeekRequest: _handleSeek,
                               showOnlyRecent: true,
@@ -1494,6 +1538,29 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     } else {
       return mainScaffoldContent;
     }
+  }
+
+  Future<void> _handleRenameRecording(
+    RecordingEntry entry,
+    String newName,
+  ) async {
+    if (newName.trim().isEmpty) return;
+    final box = Hive.box<RecordingEntry>(recordingsBoxName);
+    entry.displayName = newName.trim();
+    await box.put(entry.id, entry);
+    if (mounted) {
+      setState(() {
+        // This will trigger a rebuild of any widget listening to this entry
+      });
+    }
+  }
+
+  Future<void> _handleEditCategories(
+    RecordingEntry entry,
+    List<String> categoryIds,
+  ) async {
+    // This is a placeholder. Implement your logic for updating categories.
+    print("TODO: Implement category editing for ${entry.id} with $categoryIds");
   }
 }
 

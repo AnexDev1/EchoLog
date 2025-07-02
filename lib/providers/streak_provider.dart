@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/recording_entry.dart';
 import '../main.dart';
 
@@ -11,17 +12,30 @@ class StreakProvider extends ChangeNotifier {
   int get streak => _streak;
   DateTime? get lastRecordedDate => _lastRecordedDate;
 
+  static const String _streakKey = 'streak';
+
   Future<void> initialize() async {
     if (_initialized) return;
     await _calculateStreak();
     _initialized = true;
   }
 
+  Future<void> _saveStreak() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_streakKey, _streak);
+  }
+
+  Future<void> _loadStreak() async {
+    final prefs = await SharedPreferences.getInstance();
+    _streak = prefs.getInt(_streakKey) ?? 0;
+    notifyListeners();
+  }
+
   Future<void> _calculateStreak() async {
     final box = Hive.box<RecordingEntry>(recordingsBoxName);
     final List<RecordingEntry> all = box.values.toList();
     if (all.isEmpty) {
-      _streak = 0;
+      await _loadStreak(); // Load from prefs if no recordings
       _lastRecordedDate = null;
       notifyListeners();
       return;
@@ -38,7 +52,7 @@ class StreakProvider extends ChangeNotifier {
         .toSet();
 
     if (days.isEmpty) {
-      _streak = 0;
+      await _loadStreak(); // Load from prefs if no days
       _lastRecordedDate = null;
       notifyListeners();
       return;
@@ -66,6 +80,7 @@ class StreakProvider extends ChangeNotifier {
       }
     }
     _streak = streak;
+    await _saveStreak(); // Save to prefs
     notifyListeners();
   }
 

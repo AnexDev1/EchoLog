@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:echolog/models/recording_entry.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
@@ -23,6 +24,7 @@ class RecordingCard extends StatefulWidget {
   final double playbackProgressPercent;
   final Function(double)? onSeekRequest;
   final bool isOut;
+  final bool isVaultAvailable; // New prop to control vault menu visibility
 
   const RecordingCard({
     required Key key,
@@ -43,38 +45,53 @@ class RecordingCard extends StatefulWidget {
     this.playbackProgressPercent = 0.0,
     this.onSeekRequest,
     this.isOut = false,
+    this.isVaultAvailable = true, // Default to true for backward compatibility
   }) : super(key: key);
 
   @override
   State<RecordingCard> createState() => _RecordingCardState();
 }
 
-class _RecordingCardState extends State<RecordingCard> {
+class _RecordingCardState extends State<RecordingCard>
+    with TickerProviderStateMixin {
   bool _isTranscriptionExpanded = false;
   bool _isTranscriptionHidden = false;
+
+  Ticker? _realtimeTicker;
 
   @override
   void initState() {
     super.initState();
     // No PlayerController needed for progress bar
+    _maybeStartOrStopTicker();
   }
 
   @override
   void didUpdateWidget(RecordingCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // If you want to handle play/pause, do it via _playerController methods.
-    // Example:
-    // if (widget.isPlaying && !oldWidget.isPlaying) {
-    //   _playerController.startPlayer();
-    // } else if (!widget.isPlaying && oldWidget.isPlaying) {
-    //   _playerController.pausePlayer();
-    // }
+    // No local state for progress or play/pause; always use parent props for UI.
+    _maybeStartOrStopTicker();
   }
 
   @override
   void dispose() {
-    // No PlayerController to dispose
+    _realtimeTicker?.dispose();
     super.dispose();
+  }
+
+  void _maybeStartOrStopTicker() {
+    if (widget.isPlaying) {
+      if (_realtimeTicker == null) {
+        _realtimeTicker = createTicker((_) {
+          if (mounted) setState(() {});
+        });
+        _realtimeTicker!.start();
+      } else if (!_realtimeTicker!.isActive) {
+        _realtimeTicker!.start();
+      }
+    } else {
+      _realtimeTicker?.stop();
+    }
   }
 
   String _formatDuration(Duration duration) {
@@ -176,7 +193,7 @@ class _RecordingCardState extends State<RecordingCard> {
             transcriptionTextToShow = summaryPreview;
           } else {
             transcriptionTextToShow =
-                fullTranscription.length > collapsedPreviewLength
+                (fullTranscription.length > collapsedPreviewLength)
                 ? '${fullTranscription.substring(0, collapsedPreviewLength)}...'
                 : fullTranscription;
           }
@@ -208,6 +225,54 @@ class _RecordingCardState extends State<RecordingCard> {
       durationToDisplay = _formatDuration(widget.recording.duration);
     }
 
+    // --- Real-time progress update fix ---
+    // If the parent is not rebuilding this widget in real time, force a rebuild using an AnimationController
+    // This is a workaround for when the parent does not use ValueListenableBuilder/StreamBuilder for progress.
+    // Only do this for the currently playing card (isPlaying == true)
+    if (widget.isPlaying && widget.onSeekRequest != null) {
+      // Use a ticker to force rebuild every 100ms
+      return _RealtimeProgressWrapper(
+        builder: (context) => _buildCardContent(
+          context,
+          theme,
+          dateFormat,
+          timeFormat,
+          transcriptionTextToShow,
+          canExpand,
+          elapsedDuration,
+          durationToDisplay,
+          fullTranscription,
+          summaryPreview,
+        ),
+      );
+    } else {
+      return _buildCardContent(
+        context,
+        theme,
+        dateFormat,
+        timeFormat,
+        transcriptionTextToShow,
+        canExpand,
+        elapsedDuration,
+        durationToDisplay,
+        fullTranscription,
+        summaryPreview,
+      );
+    }
+  }
+
+  Widget _buildCardContent(
+    BuildContext context,
+    ThemeData theme,
+    DateFormat dateFormat,
+    DateFormat timeFormat,
+    String transcriptionTextToShow,
+    bool canExpand,
+    Duration elapsedDuration,
+    String durationToDisplay,
+    String? fullTranscription,
+    String? summaryPreview,
+  ) {
     return Card(
       elevation: widget.isSelected ? 6.0 : 2.0,
       margin: const EdgeInsets.symmetric(horizontal: 0.0, vertical: 6.0),
@@ -319,7 +384,8 @@ class _RecordingCardState extends State<RecordingCard> {
                                 ),
                               ),
                             if (widget.onTranscribe != null &&
-                                !hasFullTranscription)
+                                !(fullTranscription != null &&
+                                    fullTranscription.isNotEmpty))
                               const PopupMenuItem<String>(
                                 value: 'transcribe',
                                 child: Row(
@@ -330,7 +396,8 @@ class _RecordingCardState extends State<RecordingCard> {
                                   ],
                                 ),
                               ),
-                            if (hasFullTranscription &&
+                            if ((fullTranscription != null &&
+                                    fullTranscription.isNotEmpty) &&
                                 widget.onViewTranscription != null &&
                                 !canExpand)
                               const PopupMenuItem<String>(
@@ -343,7 +410,9 @@ class _RecordingCardState extends State<RecordingCard> {
                                   ],
                                 ),
                               ),
-                            if (hasFullTranscription && !_isTranscriptionHidden)
+                            if ((fullTranscription != null &&
+                                    fullTranscription.isNotEmpty) &&
+                                !_isTranscriptionHidden)
                               const PopupMenuItem<String>(
                                 value: 'hide_transcription',
                                 child: Row(
@@ -357,7 +426,9 @@ class _RecordingCardState extends State<RecordingCard> {
                                   ],
                                 ),
                               ),
-                            if (hasFullTranscription && _isTranscriptionHidden)
+                            if ((fullTranscription != null &&
+                                    fullTranscription.isNotEmpty) &&
+                                _isTranscriptionHidden)
                               const PopupMenuItem<String>(
                                 value: 'show_transcription',
                                 child: Row(
@@ -368,7 +439,8 @@ class _RecordingCardState extends State<RecordingCard> {
                                   ],
                                 ),
                               ),
-                            if (widget.onMoveToVault != null)
+                            if (widget.onMoveToVault != null &&
+                                widget.isVaultAvailable)
                               PopupMenuItem<String>(
                                 value: 'move_to_vault',
                                 child: Row(
@@ -429,13 +501,11 @@ class _RecordingCardState extends State<RecordingCard> {
                             color: _isTranscriptionExpanded
                                 ? theme.colorScheme.onSurfaceVariant
                                 : theme.hintColor.withOpacity(0.9),
-                            fontStyle: !_isTranscriptionExpanded && hasSummary
+                            fontStyle: !_isTranscriptionExpanded && canExpand
                                 ? FontStyle.italic
                                 : FontStyle.normal,
                           ),
-                          maxLines: _isTranscriptionExpanded
-                              ? null
-                              : collapsedPreviewMaxLines,
+                          maxLines: _isTranscriptionExpanded ? null : 2,
                           overflow: _isTranscriptionExpanded
                               ? TextOverflow.visible
                               : TextOverflow.ellipsis,
@@ -446,7 +516,6 @@ class _RecordingCardState extends State<RecordingCard> {
                 )
               else
                 const SizedBox.shrink(),
-              // Main mini waveform
               SliderTheme(
                 data: SliderTheme.of(context).copyWith(
                   trackHeight: 6.0,
@@ -467,6 +536,7 @@ class _RecordingCardState extends State<RecordingCard> {
                   max: 1.0,
                   value: widget.playbackProgressPercent.clamp(0.0, 1.0),
                   onChanged: widget.onSeekRequest,
+                  onChangeEnd: widget.onSeekRequest,
                 ),
               ),
               Row(
@@ -525,4 +595,35 @@ class _RecordingCardState extends State<RecordingCard> {
       ),
     );
   }
+}
+
+// --- Helper widget to force rebuild for real-time progress ---
+class _RealtimeProgressWrapper extends StatefulWidget {
+  final WidgetBuilder builder;
+  const _RealtimeProgressWrapper({required this.builder});
+  @override
+  State<_RealtimeProgressWrapper> createState() =>
+      _RealtimeProgressWrapperState();
+}
+
+class _RealtimeProgressWrapperState extends State<_RealtimeProgressWrapper>
+    with SingleTickerProviderStateMixin {
+  late final Ticker _ticker;
+  @override
+  void initState() {
+    super.initState();
+    _ticker = createTicker((_) {
+      if (mounted) setState(() {});
+    });
+    _ticker.start();
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context);
 }
