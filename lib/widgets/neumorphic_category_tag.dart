@@ -3,17 +3,16 @@ import 'package:flutter/material.dart';
 class NeumorphicCategoryTag extends StatefulWidget {
   final String label;
   final VoidCallback onTap;
-  final Color categoryColor; // Color for the text
-  final Color
-  surfaceColor; // Background color of the parent surface, also button color
-  final bool isSelected; // To visually indicate selection
+  final Color categoryColor;
+  final Color surfaceColor;
+  final bool isSelected;
 
   const NeumorphicCategoryTag({
     super.key,
     required this.label,
     required this.onTap,
     required this.categoryColor,
-    this.surfaceColor = const Color(0xFFE0E0E0), // Default light grey surface
+    this.surfaceColor = const Color(0xFFE0E0E0),
     this.isSelected = false,
   });
 
@@ -45,20 +44,13 @@ class _NeumorphicCategoryTagState extends State<NeumorphicCategoryTag>
           TweenSequenceItem(
             tween: Tween<double>(begin: 0.90, end: 1.05),
             weight: 35.0,
-          ), // Overshoot is defined here
+          ),
           TweenSequenceItem(
             tween: Tween<double>(begin: 1.05, end: 1.0),
             weight: 30.0,
-          ), // Settle back
-        ]).animate(
-          CurvedAnimation(
-            parent: _bounceController,
-            // --- THIS IS THE FIX ---
-            // Ensure the curve used here does not output values outside [0.0, 1.0]
-            // Curves.elasticOut was causing the issue because it overshoots.
-            curve: Curves.easeInOut,
-            // --- END FIX ---
           ),
+        ]).animate(
+          CurvedAnimation(parent: _bounceController, curve: Curves.easeInOut),
         );
   }
 
@@ -109,17 +101,17 @@ class _NeumorphicCategoryTagState extends State<NeumorphicCategoryTag>
         ThemeData.estimateBrightnessForColor(widget.surfaceColor) ==
         Brightness.dark;
 
+    List<BoxShadow> shadows;
+    Color currentSurfaceColor = widget.surfaceColor;
+    Color currentTextColor = widget.categoryColor;
+    Border? borderStyle;
+
     final Color darkShadowColor = isDarkSurface
         ? Colors.black.withOpacity(0.5)
         : Colors.grey.shade500;
     final Color lightShadowColor = isDarkSurface
         ? Colors.white.withOpacity(0.05)
         : Colors.white;
-
-    List<BoxShadow> shadows;
-    Color currentSurfaceColor = widget.surfaceColor;
-    Color currentTextColor = widget.categoryColor;
-    Border? borderStyle;
 
     if (widget.isSelected) {
       shadows = [

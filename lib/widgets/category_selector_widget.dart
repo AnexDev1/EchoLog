@@ -11,6 +11,8 @@ import 'add_category_dialog.dart';
 import 'neumorphic_category_tag.dart';
 import 'glassmorphic_category_tag.dart';
 import 'original_category_tag.dart';
+import 'pill_category_tag.dart';
+import 'shadow_chip_category_tag.dart';
 
 class CategorySelectorWidget extends StatefulWidget {
   final List<Map<String, dynamic>> predefinedCategories;
@@ -187,6 +189,38 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
                   ? Colors.white.withOpacity(0.85)
                   : Colors.black.withOpacity(0.75),
             );
+          } else if (currentTagStyle == CategoryTagStyle.pill) {
+            tagContentWidget = PillCategoryTag(
+              key: ValueKey("pill-tag-$categoryId"),
+              label: '$emojiString $categoryName',
+              onTap: () {
+                if (widget.isRecording) return;
+                if (isEditingThis) {
+                  _stopEditMode();
+                } else {
+                  _stopEditMode();
+                  widget.onCategorySelected(category);
+                }
+              },
+              color: categoryMainColor,
+              isSelected: isSelected,
+            );
+          } else if (currentTagStyle == CategoryTagStyle.shadowChip) {
+            tagContentWidget = ShadowChipCategoryTag(
+              key: ValueKey("shadowchip-tag-$categoryId"),
+              label: '$emojiString $categoryName',
+              onTap: () {
+                if (widget.isRecording) return;
+                if (isEditingThis) {
+                  _stopEditMode();
+                } else {
+                  _stopEditMode();
+                  widget.onCategorySelected(category);
+                }
+              },
+              color: categoryMainColor,
+              isSelected: isSelected,
+            );
           } else {
             Color currentContentColor =
                 category['iconColor'] as Color? ??
@@ -294,6 +328,24 @@ class _CategorySelectorWidgetState extends State<CategorySelectorWidget>
             defaultTextColor: isDarkTheme
                 ? Colors.white.withOpacity(0.85)
                 : Colors.black.withOpacity(0.75),
+          );
+        } else if (currentTagStyle == CategoryTagStyle.pill) {
+          addNewButtonWidget = PillCategoryTag(
+            label: '➕ Add New',
+            onTap: widget.isRecording
+                ? () {}
+                : () => _showAddCategoryDialog(context),
+            color: theme.colorScheme.primary,
+            isSelected: false,
+          );
+        } else if (currentTagStyle == CategoryTagStyle.shadowChip) {
+          addNewButtonWidget = ShadowChipCategoryTag(
+            label: '➕ Add New',
+            onTap: widget.isRecording
+                ? () {}
+                : () => _showAddCategoryDialog(context),
+            color: theme.colorScheme.primary,
+            isSelected: false,
           );
         } else {
           addNewButtonWidget = GestureDetector(

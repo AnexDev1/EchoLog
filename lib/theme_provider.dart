@@ -12,6 +12,8 @@ enum CategoryTagStyle {
   original,
   neumorphic,
   glassmorphic,
+  pill,
+  shadowChip,
 } // Enum for the styles
 
 // Helper to convert enum to string and back for SharedPreferences
@@ -57,7 +59,7 @@ class ThemeProvider with ChangeNotifier {
     final styleString = prefs.getString(PREF_CATEGORY_TAG_STYLE);
     _categoryTagStyle = stringToCategoryTagStyle(styleString);
 
-    notifyListeners();
+    notifyListeners(); // <-- Ensure widgets rebuild after loading
   }
 
   Future<void> setThemeMode(ThemeMode mode) async {
