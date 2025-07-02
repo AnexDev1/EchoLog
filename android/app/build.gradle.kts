@@ -38,8 +38,8 @@ android {
         applicationId = "com.anexon.echolog"
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
-        versionCode = 9
-        versionName = "v2.0.3"
+        versionCode = 10
+        versionName = "v2.1.4"
     }
 
     signingConfigs {

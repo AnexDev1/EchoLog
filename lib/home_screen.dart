@@ -1411,7 +1411,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     children: <Widget>[
                       Center(
                         child: SizedBox(
-                          height: 72,
+                          height: 92,
                           child: FadeTransition(
                             opacity: _greetingFadeAnim,
                             child: Center(
@@ -1443,28 +1443,44 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       ),
                       const SizedBox(height: 20),
                       Center(
-                        child: RecordingControlsWidget(
-                          waveformColor: Colors.red,
-                          isRecording: _isRecording,
-                          isRecordingPaused: _isRecordingPaused,
-                          recordingDuration: _recordingDuration,
-                          selectedCategoryData:
-                              controlsCategoryData ??
-                              {
-                                'name': 'Category',
-                                'emoji': '',
-                                'color': Colors.grey,
-                                'iconColor': Colors.grey.shade200,
-                              },
-                          isRecorderInitialized: _isRecorderInitialized,
-                          onStartStopRecording:
-                              (_selectedCategoryData == null ||
-                                  (_player?.isPlaying ?? false))
-                              ? () {}
-                              : _handleStartOrStopRecording,
-                          onTogglePausePlayRecording: _togglePausePlayRecording,
-
-                          // Props for the interactive waveform (main controls)
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            RecordingControlsWidget(
+                              waveformColor: Colors.red,
+                              isRecording: _isRecording,
+                              isRecordingPaused: _isRecordingPaused,
+                              recordingDuration: _recordingDuration,
+                              selectedCategoryData:
+                                  controlsCategoryData ??
+                                  {
+                                    'name': 'Category',
+                                    'emoji': '',
+                                    'color': Colors.grey,
+                                    'iconColor': Colors.grey.shade200,
+                                  },
+                              isRecorderInitialized: _isRecorderInitialized,
+                              onStartStopRecording:
+                                  (_selectedCategoryData == null ||
+                                      (_player?.isPlaying ?? false))
+                                  ? () {}
+                                  : _handleStartOrStopRecording,
+                              onTogglePausePlayRecording:
+                                  _togglePausePlayRecording,
+                            ),
+                            if (_selectedCategoryData == null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 10.0),
+                                child: Text(
+                                  'Choose a topic ',
+                                  style: GoogleFonts.poppins(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                       const SizedBox(height: 25), // Adjusted spacing from 40
