@@ -5,6 +5,7 @@ import 'package:echolog/models/filter_state.dart';
 import 'package:echolog/models/recording_entry.dart';
 import 'package:echolog/widgets/filter_bottom_sheet_widget.dart';
 import 'package:echolog/widgets/recording_card.dart';
+import 'package:echolog/widgets/recording_list_item_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -522,69 +523,34 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
               ),
             ),
             ...groupItems.map((entry) {
-              final isSelectedForPlayback = currentlyPlayingFileId == entry.id;
+              final isSelectedForPlayback =
+                  widget.currentlyPlayingFileIdNotifier.value == entry.id;
               final isSelectedForBulk = _selectedRecordingIds.contains(
                 entry.id,
               );
-
-              // The card for the currently playing item needs to listen to progress
-              if (isSelectedForPlayback) {
-                return ValueListenableBuilder<Duration>(
-                  valueListenable: widget.playbackProgress,
-                  builder: (context, progress, _) {
-                    // Also listen to the play/pause state for real-time updates
-                    return ValueListenableBuilder<bool>(
-                      valueListenable: widget.isActuallyPlayingNotifier,
-                      builder: (context, isActuallyPlaying, __) {
-                        return RecordingCard(
-                          key: ValueKey('list_${entry.id}_playing'),
-                          recording: entry,
-                          isPlaying: isSelectedForPlayback && isActuallyPlaying,
-                          playbackProgressPercent:
-                              (widget.totalDuration.inMilliseconds > 0)
-                              ? progress.inMilliseconds /
-                                    widget.totalDuration.inMilliseconds
-                              : 0.0,
-                          onPlayToggle: () => widget.onRecordingToggled(entry),
-                          onSeekRequest: widget.onSeekRequest,
-                          onDelete: () => widget.onDelete(entry),
-                          onShare: () => widget.onShareFile(entry),
-                          onTranscribe: () =>
-                              widget.onGenerateTranscription(entry),
-                          onMoveToVault: () => widget.onToggleHidden(entry),
-                          onEdit: () => widget.onEditCategory(entry),
-                          isSelected: isSelectedForBulk,
-                          onLongPress: () => _enterSelectionMode(entry.id),
-                          onSelect: _isSelectionMode
-                              ? () => _toggleSelection(entry.id)
-                              : null,
-                        );
-                      },
-                    );
-                  },
-                );
-              } else {
-                // Render a static card if it's not the one playing
-                return RecordingCard(
-                  key: ValueKey('list_${entry.id}_static'),
-                  recording: entry,
-                  isPlaying: false, // Not playing
-                  playbackProgressPercent: 0.0,
-                  onPlayToggle: () => widget.onRecordingToggled(entry),
-                  onSeekRequest:
-                      null, // No seeking if not the currently playing track
-                  onDelete: () => widget.onDelete(entry),
-                  onShare: () => widget.onShareFile(entry),
-                  onTranscribe: () => widget.onGenerateTranscription(entry),
-                  onMoveToVault: () => widget.onToggleHidden(entry),
-                  onEdit: () => widget.onEditCategory(entry),
-                  isSelected: isSelectedForBulk,
-                  onLongPress: () => _enterSelectionMode(entry.id),
-                  onSelect: _isSelectionMode
-                      ? () => _toggleSelection(entry.id)
-                      : null,
-                );
-              }
+              return RecordingListItemWidget(
+                key: ValueKey('listitem_${entry.id}'),
+                entry: entry,
+                isPlaying: isSelectedForPlayback,
+                isSelected: isSelectedForBulk,
+                onPlayPause: widget.onRecordingToggled,
+                onMoveToVault: widget.onToggleHidden,
+                onShare: widget.onShareFile,
+                onTranscribe: widget.onGenerateTranscription,
+                onDelete: widget.onDelete,
+                playbackProgressNotifier: isSelectedForPlayback
+                    ? widget.playbackProgress
+                    : null,
+                isActuallyPlayingNotifier: isSelectedForPlayback
+                    ? widget.isActuallyPlayingNotifier
+                    : null,
+                totalDuration: isSelectedForPlayback
+                    ? widget.totalDuration
+                    : null,
+                onSeekRequest: isSelectedForPlayback
+                    ? widget.onSeekRequest
+                    : null,
+              );
             }).toList(),
           ],
         );

@@ -1,6 +1,6 @@
 import 'package:echolog/models/filter_state.dart'; // Assuming you have this for filters
 import 'package:echolog/models/recording_entry.dart';
-import 'package:echolog/widgets/recording_card.dart';
+import 'package:echolog/widgets/recording_list_item_widget.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -17,10 +17,11 @@ class RecordingsListView extends StatefulWidget {
   final Function(RecordingEntry) onMoveToVault;
   final Function(RecordingEntry)? onViewTranscription;
   final bool showOnlyRecent;
-  final bool isActuallyPlaying; // <-- Add this
+  final ValueNotifier<bool>
+  isActuallyPlaying; // <-- Use ValueNotifier, not bool
 
   // For seek functionality on mini waveforms within RecordingCards
-  final Duration
+  final ValueNotifier<Duration>
   currentPlaybackProgress; // Overall current progress of the player
   final Duration
   currentTotalDuration; // Overall total duration of the playing track
@@ -42,7 +43,7 @@ class RecordingsListView extends StatefulWidget {
     required this.currentTotalDuration,
     this.onSeekRequest,
     this.showOnlyRecent = false,
-    required this.isActuallyPlaying, // <-- Add this
+    required this.isActuallyPlaying, // <-- Use ValueNotifier
   });
 
   @override
@@ -131,43 +132,28 @@ class _RecordingsListViewState extends State<RecordingsListView> {
           itemCount: filteredAndSortedRecordings.length,
           itemBuilder: (context, index) {
             final entry = filteredAndSortedRecordings[index];
-
             final bool isThisCardPlaying =
                 widget.currentlyPlayingFileId == entry.id;
-            final bool isActuallyPlaying = widget.isActuallyPlaying;
-            double progressPercentForThisCard = 0.0;
-            if (isThisCardPlaying &&
-                widget.currentTotalDuration.inMilliseconds > 0) {
-              progressPercentForThisCard =
-                  (widget.currentPlaybackProgress.inMilliseconds /
-                          widget.currentTotalDuration.inMilliseconds)
-                      .clamp(0.0, 1.0);
-            }
-            return RecordingCard(
-              key: ValueKey(
-                'recording_card_${entry.id}_${entry.moodColor.value}_${isThisCardPlaying && isActuallyPlaying}',
-              ),
-              recording: entry,
-              isPlaying:
-                  isThisCardPlaying &&
-                  isActuallyPlaying, // Only animate and show pause icon if actually playing
-              isSelected:
-                  isThisCardPlaying, // Selected if this is the current card
-              onPlayToggle: () =>
-                  widget.onTogglePlay(entry, filteredAndSortedRecordings),
-              onShare: () => widget.onShare(entry),
-              onTranscribe: () => widget.onTranscribe(entry),
-              onMoveToVault: () => widget.onMoveToVault(entry),
-              onDelete: () => widget.onDismissRecording(entry),
-              onViewTranscription: widget.onViewTranscription != null
-                  ? () => widget.onViewTranscription!(entry)
+            return RecordingListItemWidget(
+              entry: entry,
+              isPlaying: isThisCardPlaying,
+              isSelected: false, // Add selection logic if needed
+              onPlayPause: (e) =>
+                  widget.onTogglePlay(e, filteredAndSortedRecordings),
+              onMoveToVault: widget.onMoveToVault,
+              onShare: widget.onShare,
+              onTranscribe: widget.onTranscribe,
+              playbackProgressNotifier: isThisCardPlaying
+                  ? widget.currentPlaybackProgress
                   : null,
-              playbackProgressPercent: isThisCardPlaying
-                  ? progressPercentForThisCard
-                  : 0.0,
-              onSeekRequest: isThisCardPlaying && widget.onSeekRequest != null
-                  ? widget.onSeekRequest
+              isActuallyPlayingNotifier: isThisCardPlaying
+                  ? widget.isActuallyPlaying
                   : null,
+              onDelete: widget.onDismissRecording,
+              totalDuration: isThisCardPlaying
+                  ? widget.currentTotalDuration
+                  : null,
+              onSeekRequest: isThisCardPlaying ? widget.onSeekRequest : null,
             );
           },
         );

@@ -21,6 +21,7 @@ import 'package:echolog/widgets/create_password_dialog.dart';
 import 'package:echolog/widgets/enter_password_dialog.dart';
 import 'package:echolog/widgets/filter_bottom_sheet_widget.dart';
 import 'package:echolog/widgets/recording_controls_widget.dart';
+import 'package:echolog/widgets/recording_list_item_widget.dart';
 import 'package:echolog/widgets/recordings_list_view.dart';
 import 'services/dynamic_greeting_service.dart';
 import 'package:echolog/widgets/save_recording_dialog.dart';
@@ -1548,23 +1549,45 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             final recentRecordings = allRecordings
                                 .take(2)
                                 .toList();
-                            return RecordingsListView(
-                              onTranscribe: _transcribeWithLemonFox,
-                              onShare: _showShareOptionsDialog,
-                              onMoveToVault: _moveToVault,
-                              recordingsBoxListenable: Hive.box<RecordingEntry>(
-                                recordingsBoxName,
-                              ).listenable(),
-                              currentFilters: _currentFilters,
-                              onTogglePlay: _togglePlayRecordingItem,
-                              onDismissRecording: _handleDismissRecording,
-                              currentPlaybackProgress:
-                                  _currentPlaybackProgress.value,
-                              isActuallyPlaying:
-                                  _isActuallyPlayingNotifier.value,
-                              currentTotalDuration: _currentTotalDuration,
-                              onSeekRequest: _handleSeek,
-                              showOnlyRecent: true,
+                            return ListView.builder(
+                              padding: const EdgeInsets.only(
+                                bottom: 80.0,
+                                top: 8.0,
+                                left: 8.0,
+                                right: 8.0,
+                              ),
+                              itemCount: recentRecordings.length,
+                              itemBuilder: (context, index) {
+                                final entry = recentRecordings[index];
+                                final isThisCardPlaying =
+                                    _currentlyPlayingFileIdNotifier.value ==
+                                    entry.id;
+                                return RecordingListItemWidget(
+                                  entry: entry,
+                                  isPlaying: isThisCardPlaying,
+                                  isSelected: false,
+                                  onPlayPause: (e) => _togglePlayRecordingItem(
+                                    e,
+                                    recentRecordings,
+                                  ),
+                                  onMoveToVault: _moveToVault,
+                                  onShare: _showShareOptionsDialog,
+                                  onTranscribe: _transcribeWithLemonFox,
+                                  onDelete: _handleDismissRecording,
+                                  playbackProgressNotifier: isThisCardPlaying
+                                      ? _currentPlaybackProgress
+                                      : null,
+                                  isActuallyPlayingNotifier: isThisCardPlaying
+                                      ? _isActuallyPlayingNotifier
+                                      : null,
+                                  totalDuration: isThisCardPlaying
+                                      ? _currentTotalDuration
+                                      : null,
+                                  onSeekRequest: isThisCardPlaying
+                                      ? _handleSeek
+                                      : null,
+                                );
+                              },
                             );
                           },
                         ),
