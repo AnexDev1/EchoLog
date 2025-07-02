@@ -15,7 +15,7 @@ class RecordingsListPage extends StatefulWidget {
   final List<RecordingEntry> allRecordings;
   final Function(RecordingEntry) onRecordingToggled;
   final Function(double) onSeekRequest;
-  final String? currentlyPlayingFileId;
+  final ValueNotifier<String?> currentlyPlayingFileIdNotifier;
   final ValueNotifier<Duration> playbackProgress;
   final Duration totalDuration;
   final ValueNotifier<bool> isActuallyPlayingNotifier;
@@ -23,7 +23,7 @@ class RecordingsListPage extends StatefulWidget {
   final Function(RecordingEntry) onShareFile;
   final Function(RecordingEntry) onShareTranscription;
   final Function(RecordingEntry, String) onRename;
-  final Function(RecordingEntry, List<String>) onEditCategories;
+  final Function(RecordingEntry) onEditCategory;
   final Function(RecordingEntry) onToggleHidden;
   final Function(RecordingEntry) onGenerateTranscription;
 
@@ -32,7 +32,7 @@ class RecordingsListPage extends StatefulWidget {
     required this.allRecordings,
     required this.onRecordingToggled,
     required this.onSeekRequest,
-    this.currentlyPlayingFileId,
+    required this.currentlyPlayingFileIdNotifier,
     required this.playbackProgress,
     required this.totalDuration,
     required this.isActuallyPlayingNotifier,
@@ -40,7 +40,7 @@ class RecordingsListPage extends StatefulWidget {
     required this.onShareFile,
     required this.onShareTranscription,
     required this.onRename,
-    required this.onEditCategories,
+    required this.onEditCategory,
     required this.onToggleHidden,
     required this.onGenerateTranscription,
   });
@@ -293,24 +293,30 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
         ).listenable(),
         builder: (context, box, _) {
           final recordings = _getFilteredRecordings(box);
-          // NEW: Listen to the actual playing state
-          return ValueListenableBuilder<bool>(
-            valueListenable: widget.isActuallyPlayingNotifier,
-            builder: (context, isActuallyPlaying, __) {
-              // Listen to playback progress for real-time updates
-              return CustomScrollView(
-                slivers: [
-                  _isSelectionMode
-                      ? _buildSelectionAppBar(context)
-                      : _buildDynamicAppBar(context, recordings.length),
-                  if (recordings.isEmpty && !_isSelectionMode)
-                    SliverFillRemaining(
-                      hasScrollBody: false,
-                      child: _buildEmptyState(context),
-                    )
-                  else
-                    _buildGroupedList(recordings),
-                ],
+          // NEW: Listen to the currently playing file ID to rebuild the whole list when it changes
+          return ValueListenableBuilder<String?>(
+            valueListenable: widget.currentlyPlayingFileIdNotifier,
+            builder: (context, currentlyPlayingFileId, __) {
+              // NEW: Listen to the actual playing state
+              return ValueListenableBuilder<bool>(
+                valueListenable: widget.isActuallyPlayingNotifier,
+                builder: (context, isActuallyPlaying, __) {
+                  // Listen to playback progress for real-time updates
+                  return CustomScrollView(
+                    slivers: [
+                      _isSelectionMode
+                          ? _buildSelectionAppBar(context)
+                          : _buildDynamicAppBar(context, recordings.length),
+                      if (recordings.isEmpty && !_isSelectionMode)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: _buildEmptyState(context),
+                        )
+                      else
+                        _buildGroupedList(recordings, currentlyPlayingFileId),
+                    ],
+                  );
+                },
               );
             },
           );
@@ -486,7 +492,10 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
     );
   }
 
-  Widget _buildGroupedList(List<RecordingEntry> recordings) {
+  Widget _buildGroupedList(
+    List<RecordingEntry> recordings,
+    String? currentlyPlayingFileId,
+  ) {
     Map<String, List<RecordingEntry>> grouped = {};
     for (var entry in recordings) {
       String header = _formatDateHeader(entry.dateRecorded);
@@ -513,8 +522,7 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
               ),
             ),
             ...groupItems.map((entry) {
-              final isSelectedForPlayback =
-                  widget.currentlyPlayingFileId == entry.id;
+              final isSelectedForPlayback = currentlyPlayingFileId == entry.id;
               final isSelectedForBulk = _selectedRecordingIds.contains(
                 entry.id,
               );
@@ -544,8 +552,7 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
                           onTranscribe: () =>
                               widget.onGenerateTranscription(entry),
                           onMoveToVault: () => widget.onToggleHidden(entry),
-                          onEdit: () =>
-                              widget.onRename(entry, entry.displayName),
+                          onEdit: () => widget.onEditCategory(entry),
                           isSelected: isSelectedForBulk,
                           onLongPress: () => _enterSelectionMode(entry.id),
                           onSelect: _isSelectionMode
@@ -570,7 +577,7 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
                   onShare: () => widget.onShareFile(entry),
                   onTranscribe: () => widget.onGenerateTranscription(entry),
                   onMoveToVault: () => widget.onToggleHidden(entry),
-                  onEdit: () => widget.onRename(entry, entry.displayName),
+                  onEdit: () => widget.onEditCategory(entry),
                   isSelected: isSelectedForBulk,
                   onLongPress: () => _enterSelectionMode(entry.id),
                   onSelect: _isSelectionMode

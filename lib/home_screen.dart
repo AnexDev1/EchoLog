@@ -103,7 +103,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _isPlayerInitialized = false;
 
   // State for playback and interactive waveforms
-  String? _currentlyPlayingFileId;
+  final ValueNotifier<String?> _currentlyPlayingFileIdNotifier =
+      ValueNotifier<String?>(null);
   RecordingEntry?
   _currentlyPlayingEntry; // To access waveform points and mood color
   // For the main RecordingControlsWidget waveform
@@ -222,7 +223,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
       _playerSubscription = _player!.onProgress!.listen((e) {
         if (mounted &&
-            _currentlyPlayingFileId != null &&
+            _currentlyPlayingFileIdNotifier.value != null &&
             (_player?.isPlaying ?? false)) {
           setState(() {
             _currentPlaybackProgress.value = e.position;
@@ -249,7 +250,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Future<void> _handleSeek(double seekPercent) async {
     if (_player != null &&
         _isPlayerInitialized &&
-        _currentlyPlayingFileId != null &&
+        _currentlyPlayingFileIdNotifier.value != null &&
         _currentTotalDuration.inMilliseconds > 0) {
       final targetPosition = Duration(
         milliseconds: (_currentTotalDuration.inMilliseconds * seekPercent)
@@ -273,11 +274,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       listen: false,
     ).clearPlaybackRequest();
   }
-  // ...existing code...
 
   Future<void> _stopPlaybackAndResetState() async {
     final String? oldPlayingFileId =
-        _currentlyPlayingFileId; // Capture before reset
+        _currentlyPlayingFileIdNotifier.value; // Capture before reset
 
     if (_player != null && (_player!.isPlaying || _player!.isPaused)) {
       try {
@@ -310,7 +310,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     if (mounted) {
       setState(() {
-        _currentlyPlayingFileId = null;
+        _currentlyPlayingFileIdNotifier.value = null;
         _currentlyPlayingEntry =
             null; // This will ensure cards reflect not playing
         // _currentTotalDuration = Duration.zero; // Optional: reset or keep last known
@@ -338,9 +338,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     final String entryId = entry.id;
     final bool isTargetEntryCurrentlyPlaying =
-        _currentlyPlayingFileId == entryId && _player!.isPlaying;
+        _currentlyPlayingFileIdNotifier.value == entryId && _player!.isPlaying;
     final bool isTargetEntryCurrentlyPaused =
-        _currentlyPlayingFileId == entryId && _player!.isPaused;
+        _currentlyPlayingFileIdNotifier.value == entryId && _player!.isPaused;
 
     final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
 
@@ -396,7 +396,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     } else {
       // --- CASE 3: Play NEW entry (or different entry was active) ---
       // Stop any previous playback and reset its state first
-      if (_currentlyPlayingFileId != null ||
+      if (_currentlyPlayingFileIdNotifier.value != null ||
           _player!.isPlaying ||
           _player!.isPaused) {
         await _stopPlaybackAndResetState();
@@ -422,7 +422,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           codec: Codec.aacADTS, // Ensure this codec is correct for your files
           whenFinished: () {
             // This callback is crucial. Ensure it only acts if this specific track finished.
-            if (_currentlyPlayingFileId == entryId) {
+            if (_currentlyPlayingFileIdNotifier.value == entryId) {
               _stopPlaybackAndResetState(); // This will set isActuallyPlaying to false
             }
           },
@@ -446,7 +446,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
         if (mounted) {
           setState(() {
-            _currentlyPlayingFileId = entryId;
+            _currentlyPlayingFileIdNotifier.value = entryId;
             // _currentlyPlayingEntry is already set above
             _currentTotalDuration =
                 _currentlyPlayingEntry?.duration ?? Duration.zero;
@@ -579,6 +579,91 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         );
       },
     );
+  }
+
+  void _deleteRecording(String recordingId) async {
+    await _stopPlaybackAndResetState();
+    final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
+    final entry = recordingsBox.get(recordingId);
+    if (entry != null) {
+      // First, delete the associated file
+      try {
+        final file = File(entry.filePath);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (e) {
+        print("Error deleting file for recording $recordingId: $e");
+        // Optionally show a snackbar to the user that file deletion failed
+      }
+
+      // Then, delete the entry from Hive
+      await recordingsBox.delete(recordingId);
+
+      if (mounted) {
+        showCustomSnackBar(
+          context: context,
+          message: '"${entry.displayName}" deleted.',
+          leadingIcon: Icons.delete_sweep_rounded,
+        );
+        // No need to call setState, ValueListenableBuilder will handle it
+      }
+    }
+  }
+
+  void _renameRecording(RecordingEntry entry, String newName) async {
+    final box = Hive.box<RecordingEntry>(recordingsBoxName);
+    entry.displayName = newName;
+    await box.put(entry.id, entry);
+    if (mounted) {
+      // No need for setState, ValueListenableBuilder will handle it
+      showCustomSnackBar(
+        context: context,
+        message: 'Recording renamed to "$newName".',
+        leadingIcon: Icons.check_circle_outline_rounded,
+        iconColor: Colors.green,
+      );
+    }
+  }
+
+  void _editRecordingCategory(RecordingEntry entry) async {
+    final box = Hive.box<CustomCategory>(customCategoriesBoxName);
+    final allCategories = _getAllCategories(box);
+
+    final selectedCategoryData =
+        await showModalBottomSheet<Map<String, dynamic>>(
+          context: context,
+          isScrollControlled: true,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+          builder: (context) => CategorySelectorWidget(
+            predefinedCategories: _predefinedCategories,
+            isRecording: _isRecording,
+
+            onCategorySelected: (categoryData) {
+              Navigator.pop(context, categoryData);
+            },
+          ),
+        );
+
+    if (selectedCategoryData != null && mounted) {
+      final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
+      entry.moodName = selectedCategoryData['name'];
+      entry.moodColor = selectedCategoryData['color'];
+      entry.moodIconColor = selectedCategoryData['iconColor'];
+      entry.moodEmoji = selectedCategoryData['emoji'];
+      await recordingsBox.put(entry.id, entry);
+
+      showCustomSnackBar(
+        context: context,
+        message: 'Category updated for "${entry.displayName}".',
+        leadingIcon: Icons.check_circle_outline_rounded,
+        iconColor: Colors.green,
+      );
+      // No need for setState, ValueListenableBuilder will handle it
+    }
   }
 
   String _generateSummaryPreview(String fullText, {int maxLength = 100}) {
@@ -1045,40 +1130,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void _onCategorySelected(Map<String, dynamic>? category) async {
     if (_isRecording) return; // Don't change category while recording
 
-    // Mood-aware greetings for these moods:
-    final moodsWithSpecialGreeting = [
-      'vent',
-      'brainstorm',
-      'random talk',
-      'gratitude',
-    ];
-
-    String? moodGreeting;
-    if (category != null) {
-      final mood = (category['name'] as String?) ?? '';
-      final emoji = (category['emoji'] as String?) ?? '';
-      if (moodsWithSpecialGreeting.any((m) => mood.toLowerCase().contains(m))) {
-        moodGreeting = DynamicGreetingService.getMoodAwareGreeting(
-          mood,
-          emoji: emoji,
-        );
-      }
-    }
-
     // Animate out, set greeting, then animate in
     await _greetingAnimController.reverse();
     setState(() {
       _selectedCategoryData = category;
-      _currentGreeting = moodGreeting;
-    });
-    await _greetingAnimController.forward();
-  }
-
-  void _resetGreetingToDynamic() async {
-    await _greetingAnimController.reverse();
-    setState(() {
-      _currentGreeting = null;
-      _updateDynamicGreetingIfNeeded(force: true);
+      _currentGreeting = null; // Clear mood-specific greeting
     });
     await _greetingAnimController.forward();
   }
@@ -1177,12 +1233,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildAppBar(BuildContext context) {
     final theme = Theme.of(context);
-    final box = Hive.box<RecordingEntry>(recordingsBoxName);
-    final lastRecording = box.isNotEmpty ? box.values.last : null;
-    final greeting = DynamicGreetingService.getGreeting(
-      now: DateTime.now(),
-      lastRecording: lastRecording,
-    );
     Widget appBarWidget = AppBar(
       leading: Consumer<StreakProvider>(
         builder: (context, streakProvider, _) {
@@ -1232,7 +1282,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildRecordingPlayPauseButton(RecordingEntry entry) {
     final isPlaying =
-        _currentlyPlayingFileId == entry.id && (_player?.isPlaying ?? false);
+        _currentlyPlayingFileIdNotifier.value == entry.id &&
+        (_player?.isPlaying ?? false);
     return IconButton(
       icon: Icon(
         isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
@@ -1330,7 +1381,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     customCategoryBox,
                   );
                   final bool isAudioPlaying =
-                      _currentlyPlayingFileId != null &&
+                      _currentlyPlayingFileIdNotifier.value != null &&
                       (_player?.isPlaying ?? false);
 
                   Map<String, dynamic>? controlsCategoryData =
@@ -1450,14 +1501,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                             ),
                                           ),
                                       onRecordingToggled: (entry) =>
-                                          _togglePlayRecordingItem(entry, [
+                                          _togglePlayRecordingItem(
                                             entry,
-                                          ]),
+                                            Hive.box<RecordingEntry>(
+                                              recordingsBoxName,
+                                            ).values.toList(),
+                                            playbackContext: 'list',
+                                          ),
                                       playbackProgress:
                                           _currentPlaybackProgress,
                                       totalDuration: _currentTotalDuration,
-                                      currentlyPlayingFileId:
-                                          _currentlyPlayingFileId,
+                                      currentlyPlayingFileIdNotifier:
+                                          _currentlyPlayingFileIdNotifier,
                                       isActuallyPlayingNotifier:
                                           _isActuallyPlayingNotifier,
                                       onSeekRequest: _handleSeek,
@@ -1465,8 +1520,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                       onShareFile: _shareRecordingFile,
                                       onShareTranscription:
                                           _shareTranscriptionText,
-                                      onRename: _handleRenameRecording,
-                                      onEditCategories: _handleEditCategories,
+                                      onRename: _renameRecording,
+                                      onEditCategory: _editRecordingCategory,
                                       onToggleHidden: _moveToVault,
                                       onGenerateTranscription:
                                           _transcribeWithLemonFox,
@@ -1503,15 +1558,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               currentFilters: _currentFilters,
                               onTogglePlay: _togglePlayRecordingItem,
                               onDismissRecording: _handleDismissRecording,
-                              currentlyPlayingFileId: _currentlyPlayingFileId,
                               currentPlaybackProgress:
                                   _currentPlaybackProgress.value,
+                              isActuallyPlaying:
+                                  _isActuallyPlayingNotifier.value,
                               currentTotalDuration: _currentTotalDuration,
                               onSeekRequest: _handleSeek,
                               showOnlyRecent: true,
-                              isActuallyPlaying:
-                                  _player?.isPlaying ??
-                                  false, // <-- Pass correct value
                             );
                           },
                         ),
@@ -1540,27 +1593,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _handleRenameRecording(
-    RecordingEntry entry,
-    String newName,
-  ) async {
-    if (newName.trim().isEmpty) return;
-    final box = Hive.box<RecordingEntry>(recordingsBoxName);
-    entry.displayName = newName.trim();
-    await box.put(entry.id, entry);
-    if (mounted) {
-      setState(() {
-        // This will trigger a rebuild of any widget listening to this entry
-      });
-    }
+  Future<Map<String, dynamic>?> _showAddCategoryDialog() async {
+    // Implementation for adding a new category
+    // This would show a dialog and return the new category data
+    return null;
   }
 
-  Future<void> _handleEditCategories(
-    RecordingEntry entry,
-    List<String> categoryIds,
+  Future<void> _handleEditCustomCategory(
+    Map<String, dynamic> categoryData,
   ) async {
-    // This is a placeholder. Implement your logic for updating categories.
-    print("TODO: Implement category editing for ${entry.id} with $categoryIds");
+    // Implementation for editing a custom category
+  }
+
+  Future<void> _handleDeleteCustomCategory(String categoryId) async {
+    // Implementation for deleting a custom category
   }
 }
 
