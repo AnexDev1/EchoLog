@@ -1129,13 +1129,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _onCategorySelected(Map<String, dynamic>? category) async {
-    if (_isRecording) return; // Don't change category while recording
+    if (_isRecording) {
+      return; // Don't change category while recording
+    }
 
     // Animate out, set greeting, then animate in
     await _greetingAnimController.reverse();
     setState(() {
       _selectedCategoryData = category;
-      _currentGreeting = null; // Clear mood-specific greeting
+      if (category != null) {
+        final name = category['name'] as String? ?? '';
+        final emoji = category['emoji'] as String? ?? '';
+        _currentGreeting = DynamicGreetingService.getMoodAwareGreeting(
+          name,
+          emoji: emoji,
+        );
+      } else {
+        _currentGreeting = null; // Fall back to default greeting
+      }
     });
     await _greetingAnimController.forward();
   }
