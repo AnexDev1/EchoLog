@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:echolog/widgets/recording_card.dart';
-import '../models/recording_entry.dart';
+import 'package:echolog/models/recording_entry.dart';
 
 class RecordingListItemWidget extends StatelessWidget {
   final RecordingEntry entry;

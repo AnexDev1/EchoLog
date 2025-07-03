@@ -1,6 +1,7 @@
 import 'package:echolog/services/data_exporter_service.dart';
+
 import 'package:echolog/services/security_service.dart'; // Ensure correct path
-import 'package:echolog/theme_provider.dart';
+import 'package:echolog/theme/theme_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';

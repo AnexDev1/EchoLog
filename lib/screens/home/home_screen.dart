@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:echolog/hidden_recordings_screen.dart';
 import 'package:echolog/main.dart';
 // For recordingsBoxName, customCategoriesBoxName, hiddenRecordingsBox
 import 'package:echolog/models/custom_category.dart';
@@ -10,22 +9,23 @@ import 'package:echolog/models/filter_state.dart';
 import 'package:echolog/models/recording_entry.dart';
 import 'package:echolog/providers/playback_provider.dart';
 import 'package:echolog/providers/streak_provider.dart';
-import 'package:echolog/recordings_list_page.dart';
+import 'package:echolog/screens/hidden/hidden_recordings_screen.dart';
+import 'package:echolog/screens/home/widgets/category_selector_widget.dart';
+import 'package:echolog/screens/home/widgets/recording_controls_widget.dart';
+import 'package:echolog/screens/home/widgets/recording_list_item_widget.dart';
+import 'package:echolog/screens/home/widgets/streak_widget.dart';
+import 'package:echolog/screens/recordings/recordings_list_page.dart';
+import 'package:echolog/screens/settings/settings_screen.dart';
+import 'package:echolog/services/dynamic_greeting_service.dart';
 import 'package:echolog/services/password_service.dart';
 import 'package:echolog/services/recording_service.dart';
-import 'package:echolog/settings_screen.dart';
 import 'package:echolog/utils/custom_snackbar.dart';
-import 'package:echolog/widgets/category_selector_widget.dart';
+import 'package:echolog/widgets/dialogs/create_password_dialog.dart';
+import 'package:echolog/widgets/dialogs/enter_password_dialog.dart';
+import 'package:echolog/widgets/dialogs/filter_bottom_sheet_widget.dart';
+import 'package:echolog/widgets/dialogs/save_recording_dialog.dart';
 // import 'package:echolog/services/recording_service.dart'; // Not used directly in this file
-import 'package:echolog/widgets/create_password_dialog.dart';
-import 'package:echolog/widgets/enter_password_dialog.dart';
-import 'package:echolog/widgets/filter_bottom_sheet_widget.dart';
-import 'package:echolog/widgets/recording_controls_widget.dart';
-import 'package:echolog/widgets/recording_list_item_widget.dart';
-import 'package:echolog/widgets/recordings_list_view.dart';
-import 'services/dynamic_greeting_service.dart';
-import 'package:echolog/widgets/save_recording_dialog.dart';
-import 'package:echolog/widgets/streak_widget.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -1165,7 +1165,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         initialFilters: _currentFilters, // Pass current filters
         categories: allCategoriesForFilter, // Pass all categories
         onApplyFilters: (updatedFilters) =>
-            setState(() => _currentFilters = updatedFilters),
+            setState(() => _currentFilters = updatedFilters as FilterState),
       ),
     );
   }

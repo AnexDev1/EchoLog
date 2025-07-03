@@ -1,6 +1,6 @@
+import 'package:echolog/services/recording_service.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../utils/duration_formatter.dart';
 
 class RecordingControlsWidget extends StatelessWidget {
   final bool isRecording;

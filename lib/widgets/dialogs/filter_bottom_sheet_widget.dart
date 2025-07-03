@@ -1,7 +1,7 @@
+import 'package:echolog/models/filter_state.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart'; // For date formatting
-import '../models/filter_state.dart'; // Import your FilterState model
 
 class FilterBottomSheetWidget extends StatefulWidget {
   final FilterState initialFilters;

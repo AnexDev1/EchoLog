@@ -3,9 +3,9 @@ import 'package:echolog/main.dart';
 import 'package:echolog/models/custom_category.dart';
 import 'package:echolog/models/filter_state.dart';
 import 'package:echolog/models/recording_entry.dart';
-import 'package:echolog/widgets/filter_bottom_sheet_widget.dart';
+import 'package:echolog/widgets/dialogs/filter_bottom_sheet_widget.dart';
 import 'package:echolog/widgets/recording_card.dart';
-import 'package:echolog/widgets/recording_list_item_widget.dart';
+import 'package:echolog/screens/home/widgets/recording_list_item_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -196,7 +196,7 @@ class _RecordingsListPageState extends State<RecordingsListPage> {
         categories: allCategoriesForFilter,
         onApplyFilters: (updatedFilters) {
           setState(() {
-            _currentFilters = updatedFilters;
+            _currentFilters = updatedFilters as FilterState;
             final currentSearch = _currentFilters.searchNameQuery ?? '';
             if (_searchController.text != currentSearch) {
               _searchController.text = currentSearch;

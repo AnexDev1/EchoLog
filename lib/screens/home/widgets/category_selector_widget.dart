@@ -1,18 +1,17 @@
-import 'package:echolog/theme_provider.dart';
+import 'package:echolog/theme/theme_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'dart:math' as math; // For PI
 import 'package:provider/provider.dart';
-
-import '../models/custom_category.dart';
-import '../main.dart'; // For customCategoriesBoxName
-import 'add_category_dialog.dart';
-import 'neumorphic_category_tag.dart';
-import 'glassmorphic_category_tag.dart';
-import 'original_category_tag.dart';
-import 'pill_category_tag.dart';
-import 'shadow_chip_category_tag.dart';
+import 'package:echolog/models/custom_category.dart';
+import 'package:echolog/main.dart'; // For customCategoriesBoxName
+import 'package:echolog/widgets/dialogs/add_category_dialog.dart';
+import 'package:echolog/screens/home/widgets/neumorphic_category_tag.dart';
+import 'package:echolog/screens/home/widgets/glassmorphic_category_tag.dart';
+import 'package:echolog/screens/home/widgets/original_category_tag.dart';
+import 'package:echolog/screens/home/widgets/pill_category_tag.dart';
+import 'package:echolog/screens/home/widgets/shadow_chip_category_tag.dart';
 
 class CategorySelectorWidget extends StatefulWidget {
   final List<Map<String, dynamic>> predefinedCategories;

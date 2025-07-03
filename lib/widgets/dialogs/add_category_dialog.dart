@@ -1,11 +1,11 @@
+import 'package:echolog/main.dart';
+import 'package:echolog/models/custom_category.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:emoji_selector/emoji_selector.dart'; // Import the new package
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:hive/hive.dart';
 import 'package:uuid/uuid.dart';
-import '../models/custom_category.dart';
-import '../main.dart'; // For customCategoriesBoxName
 
 class AddCategoryDialog extends StatefulWidget {
   const AddCategoryDialog({super.key});

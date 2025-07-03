@@ -1,6 +1,6 @@
+import 'package:echolog/services/password_service.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../services/password_service.dart';
 
 class EnterPasswordDialog extends StatefulWidget {
   final PasswordService passwordService;

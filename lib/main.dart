@@ -1,4 +1,4 @@
-import 'package:echolog/locked_screen.dart';
+import 'package:echolog/screens/locked/locked_screen.dart';
 import 'package:echolog/providers/streak_provider.dart';
 
 import 'package:echolog/services/recording_service.dart';
@@ -10,12 +10,12 @@ import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
 
-import 'app_themes.dart';
-import 'home_screen.dart';
-import 'models/custom_category.dart';
-import 'models/recording_entry.dart';
-import 'providers/playback_provider.dart';
-import 'theme_provider.dart';
+import 'package:echolog/theme/app_themes.dart';
+import 'package:echolog/screens/home/home_screen.dart';
+import 'package:echolog/models/custom_category.dart';
+import 'package:echolog/models/recording_entry.dart';
+import 'package:echolog/providers/playback_provider.dart';
+import 'package:echolog/theme/theme_provider.dart';
 
 const String WIDGET_METHOD_CHANNEL_NAME = "com.anexon.echolog/widget";
 const String recordingsBoxName = 'recordingsBoxv2';

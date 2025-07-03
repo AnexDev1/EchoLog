@@ -1,6 +1,6 @@
-import 'package:echolog/models/filter_state.dart'; // Assuming you have this for filters
+import 'package:echolog/models/filter_state.dart';
 import 'package:echolog/models/recording_entry.dart';
-import 'package:echolog/widgets/recording_list_item_widget.dart';
+import 'package:echolog/screens/home/widgets/recording_list_item_widget.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';

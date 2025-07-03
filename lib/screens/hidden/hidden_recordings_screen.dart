@@ -1,3 +1,11 @@
+import 'package:echolog/main.dart';
+import 'package:echolog/models/recording_entry.dart';
+import 'package:echolog/screens/home/widgets/category_selector_widget.dart';
+import 'package:echolog/services/password_service.dart';
+import 'package:echolog/utils/custom_snackbar.dart';
+import 'package:echolog/widgets/dialogs/create_password_dialog.dart';
+import 'package:echolog/widgets/dialogs/enter_password_dialog.dart';
+import 'package:echolog/widgets/recording_card.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -9,15 +17,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-
-import '../models/recording_entry.dart';
-import '../widgets/category_selector_widget.dart';
-import '../widgets/recording_card.dart'; // Use the new card!
-import '../main.dart';
-import '../utils/custom_snackbar.dart';
-import '../services/password_service.dart';
-import '../widgets/enter_password_dialog.dart';
-import '../widgets/create_password_dialog.dart';
 
 class HiddenRecordingsScreen extends StatefulWidget {
   const HiddenRecordingsScreen({super.key});
