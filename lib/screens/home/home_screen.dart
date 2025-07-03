@@ -24,6 +24,7 @@ import 'package:echolog/widgets/dialogs/create_password_dialog.dart';
 import 'package:echolog/widgets/dialogs/enter_password_dialog.dart';
 import 'package:echolog/widgets/dialogs/filter_bottom_sheet_widget.dart';
 import 'package:echolog/widgets/dialogs/save_recording_dialog.dart';
+import 'package:echolog/services/security_service.dart';
 // import 'package:echolog/services/recording_service.dart'; // Not used directly in this file
 
 import 'package:flutter/material.dart';
@@ -324,8 +325,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Future<void> _togglePlayRecordingItem(
     RecordingEntry entry,
-    List<RecordingEntry>
-    currentList, { // This parameter might be used for context or future features
+    List<RecordingEntry> currentList, {
     String playbackContext = 'home',
   }) async {
     if (!_isPlayerInitialized || _player == null) {
@@ -350,8 +350,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       try {
         await _player!.pausePlayer();
         _isActuallyPlayingNotifier.value = false;
-        // Update the entry's state for persistence and local model consistency
-        // The RecordingCard's isPlaying prop should primarily rely on _player.isPlaying
         final entryInBox = recordingsBox.get(entryId);
         if (entryInBox != null) {
           entryInBox.isPlaying = false;
@@ -360,13 +358,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         if (_currentlyPlayingEntry?.id == entryId) {
           _currentlyPlayingEntry?.isPlaying = false;
         }
-
-        if (mounted) {
-          setState(() {
-            // UI will update because the card's isPlaying prop will change
-            // (derived from _player.isPlaying)
-          });
-        }
+        if (mounted) setState(() {});
       } catch (e) {
         print("[HomeScreen] Error pausing player: $e");
         await _stopPlaybackAndResetState(); // Fallback to stop on error
@@ -384,25 +376,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         if (_currentlyPlayingEntry?.id == entryId) {
           _currentlyPlayingEntry?.isPlaying = true;
         }
-
-        if (mounted) {
-          setState(() {
-            // UI will update
-          });
-        }
+        if (mounted) setState(() {});
       } catch (e) {
         print("[HomeScreen] Error resuming player: $e");
         await _stopPlaybackAndResetState(); // Fallback to stop on error
       }
     } else {
       // --- CASE 3: Play NEW entry (or different entry was active) ---
-      // Stop any previous playback and reset its state first
       if (_currentlyPlayingFileIdNotifier.value != null ||
           _player!.isPlaying ||
           _player!.isPaused) {
         await _stopPlaybackAndResetState();
       }
-
       final file = File(entry.filePath);
       if (!await file.exists()) {
         print(
@@ -416,39 +401,29 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         );
         return;
       }
-
       try {
         await _player!.startPlayer(
           fromURI: entry.filePath,
           codec: Codec.aacADTS, // Ensure this codec is correct for your files
           whenFinished: () {
-            // This callback is crucial. Ensure it only acts if this specific track finished.
             if (_currentlyPlayingFileIdNotifier.value == entryId) {
-              _stopPlaybackAndResetState(); // This will set isActuallyPlaying to false
+              _stopPlaybackAndResetState();
             }
           },
         );
         _isActuallyPlayingNotifier.value = true;
-
-        // Update state for the new playing entry
         final entryInBox = recordingsBox.get(entryId);
         if (entryInBox != null) {
           entryInBox.isPlaying = true;
           await recordingsBox.put(entryId, entryInBox);
-          // Update _currentlyPlayingEntry to the instance from the box or the passed entry
-          // It's often better to use the instance from the box if available
           _currentlyPlayingEntry = entryInBox;
         } else {
-          // Fallback if not in box for some reason, use the passed entry
           entry.isPlaying = true;
-          // Consider if you need to add it to the box here if it's missing
           _currentlyPlayingEntry = entry;
         }
-
         if (mounted) {
           setState(() {
             _currentlyPlayingFileIdNotifier.value = entryId;
-            // _currentlyPlayingEntry is already set above
             _currentTotalDuration =
                 _currentlyPlayingEntry?.duration ?? Duration.zero;
             _currentPlaybackProgress.value =
@@ -463,7 +438,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           leadingIcon: Icons.error_outline_rounded,
           iconColor: Theme.of(context).colorScheme.error,
         );
-        await _stopPlaybackAndResetState(); // Ensure state is reset on error
+        await _stopPlaybackAndResetState();
       }
     }
   }
@@ -811,10 +786,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
     try {
       final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
-      // Create a copy of the entry to avoid Hive instance error
+      // Always encrypt with a new unique .enc file
+      final directory = await getApplicationDocumentsDirectory();
+      final fileName =
+          'echolog_${DateTime.now().millisecondsSinceEpoch}_${entryToMove.id}.aac.enc';
+      final encryptedPath = '${directory.path}/$fileName';
+      debugPrint(
+        '[Vault] Encrypting file: ${entryToMove.filePath} -> $encryptedPath',
+      );
+      await SecurityService.encryptFile(entryToMove.filePath, encryptedPath);
+      await File(entryToMove.filePath).delete(); // Remove unencrypted file
+      // Create a copy of the entry with the encrypted file path
       final entryCopy = RecordingEntry(
         id: entryToMove.id,
-        filePath: entryToMove.filePath,
+        filePath: encryptedPath,
         displayName: entryToMove.displayName,
         duration: entryToMove.duration,
         dateRecorded: entryToMove.dateRecorded,

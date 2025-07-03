@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:encrypt/encrypt.dart' as encrypt;
 
 enum AuthMethod { None, Passcode, Biometrics }
 
@@ -16,6 +19,17 @@ class SecurityService with ChangeNotifier {
   // For grace period logic
   DateTime? _pausedTime;
   static const int _gracePeriodSeconds = 2; // 2-second grace period
+
+  // AES key and IV (for demo, use secure storage in production!)
+  static final _key = encrypt.Key.fromUtf8(
+    'abcdefghijklmnopqrstuvwxyzABCDEF',
+  ); // 32 ASCII chars
+  static final _iv = encrypt.IV.fromLength(16);
+  static final _keyDebug = (() {
+    debugPrint('AES key bytes: \\${_key.bytes}');
+    debugPrint('AES key length in bytes: \\${_key.bytes.length}');
+    return null;
+  })();
 
   AuthMethod get authMethod => _authMethod;
 
@@ -113,5 +127,35 @@ class SecurityService with ChangeNotifier {
     if (isLocked.value) {
       isLocked.value = false;
     }
+  }
+
+  /// Encrypts a file and writes the encrypted data to [outputPath].
+  static Future<void> encryptFile(String inputPath, String outputPath) async {
+    final plainBytes = await File(inputPath).readAsBytes();
+    final encrypter = encrypt.Encrypter(encrypt.AES(_key));
+    final encrypted = encrypter.encryptBytes(plainBytes, iv: _iv);
+    await File(outputPath).writeAsBytes(encrypted.bytes);
+  }
+
+  /// Decrypts a file and writes the decrypted data to [outputPath].
+  static Future<void> decryptFile(String inputPath, String outputPath) async {
+    final encryptedBytes = await File(inputPath).readAsBytes();
+    final encrypter = encrypt.Encrypter(encrypt.AES(_key));
+    final decrypted = encrypter.decryptBytes(
+      encrypt.Encrypted(encryptedBytes),
+      iv: _iv,
+    );
+    await File(outputPath).writeAsBytes(decrypted);
+  }
+
+  /// Decrypts a file and returns the raw bytes (for in-memory playback, etc.)
+  static Future<Uint8List> decryptFileToBytes(String inputPath) async {
+    final encryptedBytes = await File(inputPath).readAsBytes();
+    final encrypter = encrypt.Encrypter(encrypt.AES(_key));
+    final decrypted = encrypter.decryptBytes(
+      encrypt.Encrypted(encryptedBytes),
+      iv: _iv,
+    );
+    return Uint8List.fromList(decrypted);
   }
 }

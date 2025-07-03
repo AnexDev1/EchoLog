@@ -17,6 +17,9 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:echolog/services/security_service.dart';
+import 'dart:math';
+import 'package:flutter/foundation.dart';
 
 class HiddenRecordingsScreen extends StatefulWidget {
   const HiddenRecordingsScreen({super.key});
@@ -40,6 +43,8 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
   Duration _hiddenRecordingDuration = Duration.zero;
   Timer? _hiddenRecordingTimer;
   String? _currentHiddenRecordingPath;
+  String? _currentTempPlaybackFilePath;
+  String? _lastPlayedEntryId;
 
   Map<String, dynamic>? _selectedCategoryDataForHidden;
 
@@ -47,6 +52,7 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
 
   final String _lemonFoxApiKey = "Sf8cPZsgkaVohAnV31DxsiSO9QiIiqbj";
   bool _isTranscribing = false;
+  bool _isPlayPauseActionInProgress = false;
 
   final List<Map<String, dynamic>> _predefinedCategoriesForHidden = [
     {
@@ -111,11 +117,60 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
       recordingsBoxName,
     ); // Make sure this is your main box name
 
+    // Always save the decrypted file as a valid .aac file in the app's documents directory
+    final directory = await getApplicationDocumentsDirectory();
+    final fileName =
+        'echolog_${DateTime.now().millisecondsSinceEpoch}_decrypted.aac';
+    final decryptedPath = '${directory.path}/$fileName';
+    final isEncrypted = entry.filePath.endsWith('.enc');
+    debugPrint(
+      '[Vault] Moving out: ${entry.filePath} (isEncrypted: $isEncrypted)',
+    );
+    if (isEncrypted) {
+      try {
+        await SecurityService.decryptFile(entry.filePath, decryptedPath);
+      } catch (e, st) {
+        debugPrint('[Vault] Decryption failed: $e\n$st');
+        if (mounted) {
+          showCustomSnackBar(
+            context: context,
+            message: 'Error decrypting recording.',
+            iconColor: Colors.red,
+          );
+        }
+        return;
+      }
+    } else {
+      // Just copy the file if not encrypted
+      await File(entry.filePath).copy(decryptedPath);
+    }
+
     // Remove from hidden
     await hiddenBox.delete(entry.id);
 
+    // Manually create a new RecordingEntry with updated filePath
+    final updatedEntry = RecordingEntry(
+      id: entry.id,
+      filePath: decryptedPath,
+      displayName: entry.displayName,
+      duration: entry.duration,
+      dateRecorded: entry.dateRecorded,
+      moodName: entry.moodName,
+      moodColor: entry.moodColor,
+      moodIconColor: entry.moodIconColor,
+      moodEmoji: entry.moodEmoji,
+      transcription: entry.transcription,
+      waveformPoints: entry.waveformPoints,
+      summaryPreview: entry.summaryPreview,
+      isPlaying: entry.isPlaying,
+    );
+
     // Add to main
-    await mainBox.put(entry.id, entry);
+    await mainBox.put(entry.id, updatedEntry);
+
+    // Delete the encrypted file
+    final encFile = File(entry.filePath);
+    if (await encFile.exists()) await encFile.delete();
 
     if (mounted) {
       showCustomSnackBar(
@@ -146,6 +201,13 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
     _recorder?.closeRecorder();
     _recorder = null;
     _hiddenRecordingTimer?.cancel();
+    // Clean up temp playback file on dispose
+    if (_currentTempPlaybackFilePath != null) {
+      final tempFile = File(_currentTempPlaybackFilePath!);
+      tempFile.delete();
+      _currentTempPlaybackFilePath = null;
+    }
+    _lastPlayedEntryId = null;
     super.dispose();
   }
 
@@ -158,6 +220,15 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
     if (_player != null && (_player!.isPlaying || _player!.isPaused)) {
       await _player!.stopPlayer();
     }
+    // Delete temp playback file if it exists
+    if (_currentTempPlaybackFilePath != null) {
+      final tempFile = File(_currentTempPlaybackFilePath!);
+      if (await tempFile.exists()) {
+        await tempFile.delete();
+      }
+      _currentTempPlaybackFilePath = null;
+    }
+    _lastPlayedEntryId = null;
     if (mounted) {
       setState(() {
         _currentlyPlayingFileId = null;
@@ -169,9 +240,15 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
   }
 
   Future<void> _togglePlayRecordingItem(RecordingEntry entry) async {
+    if (_isPlayPauseActionInProgress) {
+      debugPrint('Play/Pause action ignored: already in progress');
+      return;
+    }
+    _isPlayPauseActionInProgress = true;
     if (!_isPlayerInitialized || _player == null) {
       if (mounted)
         showCustomSnackBar(context: context, message: 'Player not ready.');
+      _isPlayPauseActionInProgress = false;
       return;
     }
     final String entryId = entry.id;
@@ -179,14 +256,36 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
         _currentlyPlayingFileId == entryId;
     if (isTargetEntryCurrentlyLoaded && _player!.isPlaying) {
       // Pause
-      await _player!.pausePlayer();
-      if (mounted) setState(() => _isPlayerActuallyPlaying = false);
+      try {
+        debugPrint('Pausing playback for entry: $entryId');
+        // Optimistic UI update
+        if (mounted) setState(() => _isPlayerActuallyPlaying = false);
+        await _player!.pausePlayer();
+        debugPrint(
+          'Player state after pause: isPlaying=${_player!.isPlaying}, isPaused=${_player!.isPaused}',
+        );
+      } catch (e) {
+        debugPrint('[HiddenScreen] Error pausing player: $e');
+        await _stopPlaybackAndResetState();
+      }
+      _isPlayPauseActionInProgress = false;
     } else if (isTargetEntryCurrentlyLoaded && _player!.isPaused) {
       // Resume
-      await _player!.resumePlayer();
-      if (mounted) setState(() => _isPlayerActuallyPlaying = true);
+      try {
+        debugPrint('Resuming playback for entry: $entryId');
+        // Optimistic UI update
+        if (mounted) setState(() => _isPlayerActuallyPlaying = true);
+        await _player!.resumePlayer();
+        debugPrint(
+          'Player state after resume: isPlaying=${_player!.isPlaying}, isPaused=${_player!.isPaused}',
+        );
+      } catch (e) {
+        debugPrint('[HiddenScreen] Error resuming player: $e');
+        await _stopPlaybackAndResetState();
+      }
+      _isPlayPauseActionInProgress = false;
     } else {
-      // Play new
+      // Play new or replay same entry
       await _stopPlaybackAndResetState();
       final file = File(entry.filePath);
       if (!await file.exists()) {
@@ -195,23 +294,89 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
             context: context,
             message: 'Recording file not found.',
           );
+        _isPlayPauseActionInProgress = false;
         return;
       }
-      await _player!.startPlayer(
-        fromURI: entry.filePath,
-        codec: Codec.aacADTS,
-        whenFinished: () {
-          if (_currentlyPlayingFileId == entryId) _stopPlaybackAndResetState();
-        },
-      );
-      if (mounted) {
-        setState(() {
-          _currentlyPlayingFileId = entryId;
-          _isPlayerActuallyPlaying = true;
-          _currentTotalDuration = entry.duration;
-          _currentPlaybackProgress = Duration.zero;
-        });
+      bool needDecrypt = true;
+      // Check if file is encrypted by extension
+      final isEncrypted = entry.filePath.endsWith('.enc');
+      debugPrint('Preparing playback for entry: $entryId');
+      debugPrint('File path: ${entry.filePath}');
+      debugPrint('File isEncrypted: $isEncrypted');
+      debugPrint('File size: ${file.lengthSync()} bytes');
+      if (!isEncrypted) {
+        // Not encrypted, play directly
+        _currentTempPlaybackFilePath = entry.filePath;
+        _lastPlayedEntryId = entryId;
+        needDecrypt = false;
+      } else if (_currentTempPlaybackFilePath != null &&
+          _lastPlayedEntryId == entryId) {
+        final tempFile = File(_currentTempPlaybackFilePath!);
+        if (await tempFile.exists()) {
+          needDecrypt = false;
+        }
       }
+      if (needDecrypt) {
+        if (_currentTempPlaybackFilePath != null) {
+          final tempFile = File(_currentTempPlaybackFilePath!);
+          if (await tempFile.exists()) {
+            await tempFile.delete();
+          }
+          _currentTempPlaybackFilePath = null;
+        }
+        final tempDir = await getTemporaryDirectory();
+        final tempFilePath =
+            tempDir.path +
+            '/playback_${entry.id}_${DateTime.now().millisecondsSinceEpoch}.aac';
+        try {
+          await SecurityService.decryptFile(entry.filePath, tempFilePath);
+          _currentTempPlaybackFilePath = tempFilePath;
+          _lastPlayedEntryId = entryId;
+        } catch (e, st) {
+          debugPrint('[HiddenScreen] Decryption failed: $e\n$st');
+          if (mounted)
+            showCustomSnackBar(
+              context: context,
+              message: 'Error decrypting recording.',
+              iconColor: Colors.red,
+            );
+          _isPlayPauseActionInProgress = false;
+          return;
+        }
+      }
+      try {
+        debugPrint('Starting playback for entry: $entryId');
+        // Optimistic UI update
+        if (mounted) {
+          setState(() {
+            _currentlyPlayingFileId = entryId;
+            _isPlayerActuallyPlaying = true;
+            _currentTotalDuration = entry.duration;
+            _currentPlaybackProgress = Duration.zero;
+          });
+        }
+        await _player!.startPlayer(
+          fromURI: _currentTempPlaybackFilePath!,
+          codec: Codec.aacADTS,
+          whenFinished: () async {
+            if (_currentlyPlayingFileId == entryId)
+              await _stopPlaybackAndResetState();
+          },
+        );
+        debugPrint(
+          'Player state after start: isPlaying=${_player!.isPlaying}, isPaused=${_player!.isPaused}',
+        );
+      } catch (e) {
+        debugPrint('[HiddenScreen] Error playing recording item: $e');
+        if (mounted)
+          showCustomSnackBar(
+            context: context,
+            message: 'Error playing recording.',
+            iconColor: Colors.red,
+          );
+        await _stopPlaybackAndResetState();
+      }
+      _isPlayPauseActionInProgress = false;
     }
   }
 
@@ -235,8 +400,6 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
     final String deletedFilePath = entry.filePath;
     await box.delete(entry.id);
     if (_currentlyPlayingFileId == entry.id) await _stopPlaybackAndResetState();
-    final file = File(deletedFilePath);
-    if (await file.exists()) await file.delete();
     if (mounted)
       showCustomSnackBar(
         context: context,
@@ -274,27 +437,56 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
           final categoryToSave =
               _selectedCategoryDataForHidden ??
               _predefinedCategoriesForHidden.first;
-          final newEntry = RecordingEntry(
-            id: DateTime.now().millisecondsSinceEpoch.toString(),
-            filePath: path,
-            displayName: recordingName,
-            duration: _hiddenRecordingDuration,
-            dateRecorded: DateTime.now(),
-            moodName: categoryToSave['name'] as String,
-            moodColor: categoryToSave['color'] as Color,
-            moodIconColor: categoryToSave['iconColor'] as Color,
-            moodEmoji: categoryToSave['emoji'] as String? ?? '🤫',
-            isPlaying: false,
-            transcription: null,
-          );
+
+          // Encrypt the file after recording
+          final encryptedPath = path + '.enc';
           final box = Hive.box<RecordingEntry>(hiddenRecordingsBoxName);
-          await box.put(newEntry.id, newEntry);
-          if (mounted) {
-            showCustomSnackBar(
-              context: context,
-              message: '"$recordingName" saved.',
-              iconColor: Colors.green,
+          try {
+            debugPrint('Saving hidden recording: $recordingName');
+            debugPrint('Encrypting file: $path -> $encryptedPath');
+            await SecurityService.encryptFile(path, encryptedPath);
+            debugPrint('Encryption complete. Deleting original file: $path');
+            await File(path).delete();
+            debugPrint('Original file deleted. Saving to Hive box...');
+            final newEntry = RecordingEntry(
+              id: DateTime.now().millisecondsSinceEpoch.toString(),
+              filePath: encryptedPath,
+              displayName: recordingName,
+              duration: _hiddenRecordingDuration,
+              dateRecorded: DateTime.now(),
+              moodName: categoryToSave['name'] as String,
+              moodColor: categoryToSave['color'] as Color,
+              moodIconColor: categoryToSave['iconColor'] as Color,
+              moodEmoji: categoryToSave['emoji'] as String? ?? '🤫',
+              isPlaying: false,
+              transcription: null,
             );
+            await box.put(newEntry.id, newEntry);
+            debugPrint('Saved to Hive. Box keys: ' + box.keys.toString());
+            debugPrint('Box length: ' + box.length.toString());
+            for (var k in box.keys) {
+              final e = box.get(k);
+              debugPrint(
+                'Entry: id=${e?.id}, displayName=${e?.displayName}, filePath=${e?.filePath}',
+              );
+            }
+            if (mounted) {
+              setState(() {}); // Force UI refresh
+              showCustomSnackBar(
+                context: context,
+                message: '"$recordingName" saved.',
+                iconColor: Colors.green,
+              );
+            }
+          } catch (e, st) {
+            debugPrint('Error saving hidden recording: $e\n$st');
+            if (mounted) {
+              showCustomSnackBar(
+                context: context,
+                message: 'Error saving hidden recording: $e',
+                iconColor: Colors.red,
+              );
+            }
           }
         }
       } catch (e) {
@@ -701,42 +893,23 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
                                     _currentTotalDuration.inMilliseconds)
                                 .clamp(0.0, 1.0);
                       }
-                      return Dismissible(
-                        key: ValueKey('dismiss_${entry.id}'),
-                        direction: DismissDirection.endToStart,
-                        background: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.red.shade700,
-                            borderRadius: BorderRadius.circular(12.0),
-                          ),
-                          margin: const EdgeInsets.symmetric(vertical: 4.0),
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          alignment: Alignment.centerRight,
-                          child: const Icon(
-                            Icons.delete_sweep_outlined,
-                            color: Colors.white,
-                            size: 28,
-                          ),
+                      // Remove Dismissible, just return the RecordingCard directly
+                      return RecordingCard(
+                        key: ValueKey(
+                          'rc_${entry.id}_${showAsPlayingButton}_${progressPercentForThisCard.toStringAsFixed(4)}',
                         ),
-                        onDismissed: (direction) =>
-                            _handleDismissHiddenRecording(entry),
-                        child: RecordingCard(
-                          key: ValueKey(
-                            'rc_${entry.id}_${showAsPlayingButton}_${progressPercentForThisCard.toStringAsFixed(4)}',
-                          ),
-                          recording: entry,
-                          isPlaying: showAsPlayingButton,
-                          onPlayToggle: () => _togglePlayRecordingItem(entry),
-                          onShare: () => _showShareOptionsDialog(entry),
-                          onTranscribe: () => _transcribeWithLemonFox(entry),
-                          onDelete: () => _handleDismissHiddenRecording(entry),
-                          onMoveToVault: () => _moveOutOfVault(entry),
-                          playbackProgressPercent: progressPercentForThisCard,
-                          onSeekRequest: isThisCardTheActiveTrack
-                              ? _handleSeekRequest
-                              : null,
-                          isOut: true,
-                        ),
+                        recording: entry,
+                        isPlaying: showAsPlayingButton,
+                        onPlayToggle: () => _togglePlayRecordingItem(entry),
+                        onShare: () => _showShareOptionsDialog(entry),
+                        onTranscribe: () => _transcribeWithLemonFox(entry),
+                        onDelete: () => _handleDismissHiddenRecording(entry),
+                        onMoveToVault: () => _moveOutOfVault(entry),
+                        playbackProgressPercent: progressPercentForThisCard,
+                        onSeekRequest: isThisCardTheActiveTrack
+                            ? _handleSeekRequest
+                            : null,
+                        isOut: true,
                       );
                     },
                   );
