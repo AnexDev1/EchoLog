@@ -7,7 +7,9 @@ import 'package:echolog/utils/color_adapter.dart';
 import 'package:echolog/utils/duration_adapter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import 'package:echolog/theme/app_themes.dart';
@@ -16,6 +18,7 @@ import 'package:echolog/models/custom_category.dart';
 import 'package:echolog/models/recording_entry.dart';
 import 'package:echolog/providers/playback_provider.dart';
 import 'package:echolog/theme/theme_provider.dart';
+import 'package:echolog/providers/transcription_status_provider.dart';
 
 const String WIDGET_METHOD_CHANNEL_NAME = "com.anexon.echolog/widget";
 const String recordingsBoxName = 'recordingsBoxv2';
@@ -25,7 +28,9 @@ const String appSettingsBoxName = 'appSettingsBox';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Hive.initFlutter();
+  await dotenv.load(fileName: ".env");
+  final appDocumentDir = await getApplicationDocumentsDirectory();
+  await Hive.initFlutter(appDocumentDir.path);
 
   if (!Hive.isAdapterRegistered(ColorAdapter().typeId)) {
     Hive.registerAdapter(ColorAdapter());
@@ -54,6 +59,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => StreakProvider()),
         ChangeNotifierProvider(create: (_) => PlaybackProvider()),
+        ChangeNotifierProvider(create: (_) => TranscriptionStatusProvider()),
         // Use .value for the pre-initialized service
         ChangeNotifierProvider.value(value: securityService),
       ],

@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:encrypt/encrypt.dart' as encrypt;
+import 'dart:convert'; // For base64 encoding
 
 enum AuthMethod { None, Passcode, Biometrics }
 
 class SecurityService with ChangeNotifier {
   final LocalAuthentication _localAuth = LocalAuthentication();
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
+  static const _keyStorageKey = 'com.example.echolog.encryptionKey';
+
   AuthMethod _authMethod = AuthMethod.None;
   String? _savedPasscode;
 
@@ -20,21 +25,35 @@ class SecurityService with ChangeNotifier {
   DateTime? _pausedTime;
   static const int _gracePeriodSeconds = 2; // 2-second grace period
 
-  // AES key and IV (for demo, use secure storage in production!)
-  static final _key = encrypt.Key.fromUtf8(
-    'abcdefghijklmnopqrstuvwxyzABCDEF',
-  ); // 32 ASCII chars
-  static final _iv = encrypt.IV.fromLength(16);
-  static final _keyDebug = (() {
-    debugPrint('AES key bytes: \\${_key.bytes}');
-    debugPrint('AES key length in bytes: \\${_key.bytes.length}');
-    return null;
-  })();
+  // The key is now loaded asynchronously and stored in a Future.
+  late final Future<encrypt.Key> _keyFuture;
 
   AuthMethod get authMethod => _authMethod;
 
   SecurityService() {
     _loadSettings();
+    _keyFuture = _getOrCreateEncryptionKey();
+  }
+
+  Future<encrypt.Key> _getOrCreateEncryptionKey() async {
+    // Try to read the key from secure storage
+    String? base64Key = await _secureStorage.read(key: _keyStorageKey);
+
+    if (base64Key == null) {
+      // If no key exists, generate a new one
+      final newKey = encrypt.Key.fromSecureRandom(32);
+      // Store it securely as a base64 string
+      await _secureStorage.write(
+        key: _keyStorageKey,
+        value: base64.encode(newKey.bytes),
+      );
+      debugPrint('Generated and stored a new encryption key.');
+      return newKey;
+    } else {
+      // If a key exists, decode it from base64
+      debugPrint('Loaded existing encryption key.');
+      return encrypt.Key(base64.decode(base64Key));
+    }
   }
 
   Future<void> _loadSettings() async {
@@ -130,31 +149,47 @@ class SecurityService with ChangeNotifier {
   }
 
   /// Encrypts a file and writes the encrypted data to [outputPath].
-  static Future<void> encryptFile(String inputPath, String outputPath) async {
+  /// The file format will be: [16-byte IV][encrypted data]
+  Future<void> encryptFile(String inputPath, String outputPath) async {
+    final key = await _keyFuture;
     final plainBytes = await File(inputPath).readAsBytes();
-    final encrypter = encrypt.Encrypter(encrypt.AES(_key));
-    final encrypted = encrypter.encryptBytes(plainBytes, iv: _iv);
-    await File(outputPath).writeAsBytes(encrypted.bytes);
+    final encrypter = encrypt.Encrypter(encrypt.AES(key));
+
+    // Create a new, random IV for each encryption for security
+    final iv = encrypt.IV.fromSecureRandom(16);
+
+    final encrypted = encrypter.encryptBytes(plainBytes, iv: iv);
+
+    // Prepend the IV to the encrypted data. The decryptor will need it.
+    final encryptedBytesWithIv = iv.bytes + encrypted.bytes;
+
+    await File(outputPath).writeAsBytes(encryptedBytesWithIv);
   }
 
   /// Decrypts a file and writes the decrypted data to [outputPath].
-  static Future<void> decryptFile(String inputPath, String outputPath) async {
-    final encryptedBytes = await File(inputPath).readAsBytes();
-    final encrypter = encrypt.Encrypter(encrypt.AES(_key));
-    final decrypted = encrypter.decryptBytes(
-      encrypt.Encrypted(encryptedBytes),
-      iv: _iv,
-    );
-    await File(outputPath).writeAsBytes(decrypted);
+  /// Assumes the file format is: [16-byte IV][encrypted data]
+  Future<void> decryptFile(String inputPath, String outputPath) async {
+    final decryptedBytes = await decryptFileToBytes(inputPath);
+    await File(outputPath).writeAsBytes(decryptedBytes);
   }
 
   /// Decrypts a file and returns the raw bytes (for in-memory playback, etc.)
-  static Future<Uint8List> decryptFileToBytes(String inputPath) async {
-    final encryptedBytes = await File(inputPath).readAsBytes();
-    final encrypter = encrypt.Encrypter(encrypt.AES(_key));
+  /// Assumes the file format is: [16-byte IV][encrypted data]
+  Future<Uint8List> decryptFileToBytes(String inputPath) async {
+    final key = await _keyFuture;
+    final encryptedBytesWithIv = await File(inputPath).readAsBytes();
+
+    // 1. Extract the IV from the first 16 bytes.
+    final iv = encrypt.IV(encryptedBytesWithIv.sublist(0, 16));
+
+    // 2. Extract the actual encrypted data.
+    final encryptedBytes = encryptedBytesWithIv.sublist(16);
+
+    // 3. Decrypt
+    final encrypter = encrypt.Encrypter(encrypt.AES(key));
     final decrypted = encrypter.decryptBytes(
       encrypt.Encrypted(encryptedBytes),
-      iv: _iv,
+      iv: iv,
     );
     return Uint8List.fromList(decrypted);
   }

@@ -9,6 +9,7 @@ import 'package:echolog/models/filter_state.dart';
 import 'package:echolog/models/recording_entry.dart';
 import 'package:echolog/providers/playback_provider.dart';
 import 'package:echolog/providers/streak_provider.dart';
+import 'package:echolog/providers/transcription_status_provider.dart';
 import 'package:echolog/screens/hidden/hidden_recordings_screen.dart';
 import 'package:echolog/screens/home/widgets/category_selector_widget.dart';
 import 'package:echolog/screens/home/widgets/recording_controls_widget.dart';
@@ -25,6 +26,7 @@ import 'package:echolog/widgets/dialogs/enter_password_dialog.dart';
 import 'package:echolog/widgets/dialogs/filter_bottom_sheet_widget.dart';
 import 'package:echolog/widgets/dialogs/save_recording_dialog.dart';
 import 'package:echolog/services/security_service.dart';
+import 'package:echolog/widgets/transcription_progress_bar.dart';
 // import 'package:echolog/services/recording_service.dart'; // Not used directly in this file
 
 import 'package:flutter/material.dart';
@@ -37,10 +39,10 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 const String PREF_HIDDEN_ACCESS_METHOD = 'selectedHiddenAccessTriggerMethod';
-final String _lemonFoxApiKey =
-    "Sf8cPZsgkaVohAnV31DxsiSO9QiIiqbj"; // Consider moving to a config file and .gitignore
+final String _lemonFoxApiKey = dotenv.env['LEMONFOX_API_KEY'] ?? "";
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -651,6 +653,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Future<void> _transcribeWithLemonFox(RecordingEntry entry) async {
     await _stopPlaybackAndResetState(); // Stop playback before transcribing
+    final transcriptionStatus = Provider.of<TranscriptionStatusProvider>(
+      context,
+      listen: false,
+    );
     if (_lemonFoxApiKey.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Lemonfox API Key not set.')),
@@ -671,65 +677,72 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return;
     }
 
-    setState(() => _isTranscribingLemonFox = true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Transcribing "${entry.displayName}"...')),
-    );
-    final Uri apiUri = Uri.parse(
-      "https://api.lemonfox.ai/v1/audio/transcriptions",
-    );
+    transcriptionStatus.startTranscription(entry.id);
     try {
+      // Simulate progress: Preparing
+      transcriptionStatus.updateProgress(0.1, 'Preparing to transcribe...');
+      await Future.delayed(const Duration(milliseconds: 600));
+      // Simulate progress: Detecting language
+      transcriptionStatus.updateProgress(0.3, 'Detecting language...');
+      await Future.delayed(const Duration(milliseconds: 900));
+      // Simulate progress: Transcribing
+      transcriptionStatus.updateProgress(0.6, 'Transcribing...');
+      await Future.delayed(const Duration(milliseconds: 1200));
+      // Actually send the request
+      final Uri apiUri = Uri.parse(
+        "https://api.lemonfox.ai/v1/audio/transcriptions",
+      );
       var request = http.MultipartRequest('POST', apiUri);
       request.headers['Authorization'] = 'Bearer $_lemonFoxApiKey';
       request.files.add(
         await http.MultipartFile.fromPath('file', entry.filePath),
       );
-      request.fields['response_format'] =
-          'json'; // Ensure this is correct for LemonFox
+      request.fields['response_format'] = 'json';
       final streamedResponse = await request.send();
       final response = await http.Response.fromStream(streamedResponse);
-
       if (response.statusCode == 200) {
+        transcriptionStatus.updateProgress(0.95, 'Finalizing transcription...');
         final Map<String, dynamic> responseData = jsonDecode(response.body);
         final String? transcriptText = responseData['text'];
         if (transcriptText != null) {
-          final box = Hive.box<RecordingEntry>(recordingsBoxName);
+          final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
           entry.transcription = transcriptText;
-          entry.summaryPreview = _generateSummaryPreview(
-            transcriptText,
-          ); // Generate and save summary
-          await box.put(entry.id, entry);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Transcription complete for "${entry.displayName}"!',
-              ),
-              duration: const Duration(seconds: 3),
-            ),
+          await recordingsBox.put(entry.id, entry);
+          transcriptionStatus.finishTranscription();
+          showCustomSnackBar(
+            context: context,
+            message: 'Transcription complete!',
+            iconColor: Colors.green,
           );
         } else {
-          throw Exception('Transcription text not found in response.');
+          transcriptionStatus.failTranscription(
+            'Transcription text not found.',
+          );
+          throw Exception('Transcription text not found.');
         }
       } else {
         String errorMessage = "Error ${response.statusCode}";
         try {
           final Map<String, dynamic> errorData = jsonDecode(response.body);
-          errorMessage += errorData['detail'] != null
-              ? "\n${errorData['detail']}"
+          errorMessage += "\n${errorData['error'] ?? 'Unknown error'}";
+          errorMessage += (errorData['detail'] != null
+              ? errorData['detail']
               : (errorData['message'] != null
-                    ? "\n${errorData['message']}"
-                    : "\n${response.body}");
+                    ? errorData['message']
+                    : response.body));
         } catch (_) {
           errorMessage += "\n${response.body}";
         }
+        transcriptionStatus.failTranscription(errorMessage);
         throw Exception(errorMessage);
       }
     } catch (e) {
+      transcriptionStatus.failTranscription(
+        'Lemonfox transcription failed: $e',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Lemonfox transcription failed: $e')),
       );
-    } finally {
-      setState(() => _isTranscribingLemonFox = false);
     }
   }
 
@@ -794,7 +807,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       debugPrint(
         '[Vault] Encrypting file: ${entryToMove.filePath} -> $encryptedPath',
       );
-      await SecurityService.encryptFile(entryToMove.filePath, encryptedPath);
+      await SecurityService().encryptFile(entryToMove.filePath, encryptedPath);
       await File(entryToMove.filePath).delete(); // Remove unencrypted file
       // Create a copy of the entry with the encrypted file path
       final entryCopy = RecordingEntry(
@@ -1321,327 +1334,279 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    Widget mainScaffoldContent = Consumer<PlaybackProvider>(
-      builder: (context, playbackProvider, child) {
-        final recordingToPlayFromWidget = playbackProvider.recordingToPlay;
-        final shouldPlayImmediately = playbackProvider.playImmediately;
+    Widget mainScaffoldContent = Scaffold(
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: _buildAppBar(context),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          16.0,
+          16.0,
+          16.0,
+          0,
+        ), // Use all(16.0) or specific as needed
+        child: ValueListenableBuilder<Box<CustomCategory>>(
+          valueListenable: Hive.box<CustomCategory>(
+            customCategoriesBoxName,
+          ).listenable(),
+          builder: (context, customCategoryBox, _) {
+            final allDisplayCategories = _getAllCategories(customCategoryBox);
+            final bool isAudioPlaying =
+                _currentlyPlayingFileIdNotifier.value != null &&
+                (_player?.isPlaying ?? false);
 
-        if (recordingToPlayFromWidget != null && shouldPlayImmediately) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted &&
-                playbackProvider.recordingToPlay == recordingToPlayFromWidget &&
-                playbackProvider.playImmediately) {
-              _playRecordingFromProviderOrWidget(recordingToPlayFromWidget);
+            Map<String, dynamic>? controlsCategoryData = _selectedCategoryData;
+            if (_currentlyPlayingEntry != null) {
+              controlsCategoryData = {
+                'name': _currentlyPlayingEntry!.moodName,
+                'emoji': _currentlyPlayingEntry!.moodEmoji,
+                'color': _currentlyPlayingEntry!.moodColor,
+                'iconColor': _currentlyPlayingEntry!.moodIconColor,
+              };
             }
-          });
-        }
 
-        return WillPopScope(
-          onWillPop: () async {
-            if (Navigator.of(context).canPop()) {
-              return true;
-            }
-            if (_lastBackPressed == null ||
-                DateTime.now().difference(_lastBackPressed!) >
-                    const Duration(seconds: 2)) {
-              // First press
-              _lastBackPressed = DateTime.now();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Press back again to exit'),
-                  duration: Duration(seconds: 2),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-              return false; // Prevent app from exiting
-            }
-            return true;
-          },
-          child: Scaffold(
-            appBar: PreferredSize(
-              preferredSize: const Size.fromHeight(kToolbarHeight),
-              child: _buildAppBar(context),
-            ),
-            body: Padding(
-              padding: const EdgeInsets.fromLTRB(
-                16.0,
-                16.0,
-                16.0,
-                0,
-              ), // Use all(16.0) or specific as needed
-              child: ValueListenableBuilder<Box<CustomCategory>>(
-                valueListenable: Hive.box<CustomCategory>(
-                  customCategoriesBoxName,
-                ).listenable(),
-                builder: (context, customCategoryBox, _) {
-                  final allDisplayCategories = _getAllCategories(
-                    customCategoryBox,
-                  );
-                  final bool isAudioPlaying =
-                      _currentlyPlayingFileIdNotifier.value != null &&
-                      (_player?.isPlaying ?? false);
+            // Use safe helpers for greeting display
+            final greetingText =
+                _currentGreeting ?? _cachedDynamicGreeting ?? '';
+            final safeCategoryName = _safeCategoryName(_selectedCategoryData);
+            final safeCategoryEmoji = _safeCategoryEmoji(_selectedCategoryData);
 
-                  Map<String, dynamic>? controlsCategoryData =
-                      _selectedCategoryData;
-                  if (_currentlyPlayingEntry != null) {
-                    controlsCategoryData = {
-                      'name': _currentlyPlayingEntry!.moodName,
-                      'emoji': _currentlyPlayingEntry!.moodEmoji,
-                      'color': _currentlyPlayingEntry!.moodColor,
-                      'iconColor': _currentlyPlayingEntry!.moodIconColor,
-                    };
-                  }
-
-                  // Use safe helpers for greeting display
-                  final greetingText =
-                      _currentGreeting ?? _cachedDynamicGreeting ?? '';
-                  final safeCategoryName = _safeCategoryName(
-                    _selectedCategoryData,
-                  );
-                  final safeCategoryEmoji = _safeCategoryEmoji(
-                    _selectedCategoryData,
-                  );
-
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      Center(
-                        child: SizedBox(
-                          height: 92,
-                          child: FadeTransition(
-                            opacity: _greetingFadeAnim,
-                            child: Center(
-                              child: Text(
-                                greetingText.isNotEmpty
-                                    ? greetingText
-                                    : (safeCategoryEmoji.isNotEmpty ||
-                                              safeCategoryName.isNotEmpty
-                                          ? '${safeCategoryEmoji.isNotEmpty ? safeCategoryEmoji + ' ' : ''}${safeCategoryName}'
-                                          : ''),
-                                textAlign: TextAlign.center,
-                                style: GoogleFonts.poppins(
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.w600,
-                                  color: theme.colorScheme.onBackground,
-                                ),
-                              ),
-                            ),
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Center(
+                  child: SizedBox(
+                    height: 92,
+                    child: FadeTransition(
+                      opacity: _greetingFadeAnim,
+                      child: Center(
+                        child: Text(
+                          greetingText.isNotEmpty
+                              ? greetingText
+                              : (safeCategoryEmoji.isNotEmpty ||
+                                        safeCategoryName.isNotEmpty
+                                    ? '${safeCategoryEmoji.isNotEmpty ? safeCategoryEmoji + ' ' : ''}${safeCategoryName}'
+                                    : ''),
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.poppins(
+                            fontSize: 26,
+                            fontWeight: FontWeight.w600,
+                            color: theme.colorScheme.onBackground,
                           ),
                         ),
                       ),
+                    ),
+                  ),
+                ),
 
-                      const SizedBox(height: 25),
-                      CategorySelectorWidget(
-                        predefinedCategories: _predefinedCategories,
-                        selectedCategoryData: _selectedCategoryData,
+                const SizedBox(height: 25),
+                CategorySelectorWidget(
+                  predefinedCategories: _predefinedCategories,
+                  selectedCategoryData: _selectedCategoryData,
+                  isRecording: _isRecording,
+                  onCategorySelected: _onCategorySelected,
+                ),
+                const SizedBox(height: 20),
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      RecordingControlsWidget(
+                        waveformColor: Colors.red,
                         isRecording: _isRecording,
-                        onCategorySelected: _onCategorySelected,
+                        isRecordingPaused: _isRecordingPaused,
+                        recordingDuration: _recordingDuration,
+                        selectedCategoryData:
+                            controlsCategoryData ??
+                            {
+                              'name': 'Category',
+                              'emoji': '',
+                              'color': Colors.grey,
+                              'iconColor': Colors.grey.shade200,
+                            },
+                        isRecorderInitialized: _isRecorderInitialized,
+                        onStartStopRecording:
+                            (_selectedCategoryData == null ||
+                                (_player?.isPlaying ?? false))
+                            ? () {}
+                            : _handleStartOrStopRecording,
+                        onTogglePausePlayRecording: _togglePausePlayRecording,
                       ),
-                      const SizedBox(height: 20),
-                      Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            RecordingControlsWidget(
-                              waveformColor: Colors.red,
-                              isRecording: _isRecording,
-                              isRecordingPaused: _isRecordingPaused,
-                              recordingDuration: _recordingDuration,
-                              selectedCategoryData:
-                                  controlsCategoryData ??
-                                  {
-                                    'name': 'Category',
-                                    'emoji': '',
-                                    'color': Colors.grey,
-                                    'iconColor': Colors.grey.shade200,
-                                  },
-                              isRecorderInitialized: _isRecorderInitialized,
-                              onStartStopRecording:
-                                  (_selectedCategoryData == null ||
-                                      (_player?.isPlaying ?? false))
-                                  ? () {}
-                                  : _handleStartOrStopRecording,
-                              onTogglePausePlayRecording:
-                                  _togglePausePlayRecording,
+                      if (_selectedCategoryData == null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10.0),
+                          child: Text(
+                            'Choose a topic ',
+                            style: GoogleFonts.poppins(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
                             ),
-                            if (_selectedCategoryData == null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 10.0),
-                                child: Text(
-                                  'Choose a topic ',
-                                  style: GoogleFonts.poppins(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                          ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 25), // Adjusted spacing from 40
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 0.0,
+                  ), // Adjusted from 8.0
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Recent Recordings',
+                        style: GoogleFonts.poppins(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.onBackground,
                         ),
                       ),
-                      const SizedBox(height: 25), // Adjusted spacing from 40
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 0.0,
-                        ), // Adjusted from 8.0
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'Recent Recordings',
-                              style: GoogleFonts.poppins(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w600,
-                                color: theme.colorScheme.onBackground,
-                              ),
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                Icons.arrow_forward_ios_rounded,
-                                color: theme.colorScheme.primary,
-                              ),
-                              tooltip: 'View All Recordings',
-                              onPressed: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => RecordingsListPage(
-                                      allRecordings:
-                                          Hive.box<RecordingEntry>(
-                                            recordingsBoxName,
-                                          ).values.toList()..sort(
-                                            (a, b) => b.dateRecorded.compareTo(
-                                              a.dateRecorded,
-                                            ),
-                                          ),
-                                      onRecordingToggled: (entry) =>
-                                          _togglePlayRecordingItem(
-                                            entry,
-                                            Hive.box<RecordingEntry>(
-                                              recordingsBoxName,
-                                            ).values.toList(),
-                                            playbackContext: 'list',
-                                          ),
-                                      playbackProgress:
-                                          _currentPlaybackProgress,
-                                      totalDuration: _currentTotalDuration,
-                                      currentlyPlayingFileIdNotifier:
-                                          _currentlyPlayingFileIdNotifier,
-                                      isActuallyPlayingNotifier:
-                                          _isActuallyPlayingNotifier,
-                                      onSeekRequest: _handleSeek,
-                                      onDelete: _handleDismissRecording,
-                                      onShareFile: _shareRecordingFile,
-                                      onShareTranscription:
-                                          _shareTranscriptionText,
-                                      onRename: _renameRecording,
-                                      onEditCategory: _editRecordingCategory,
-                                      onToggleHidden: _moveToVault,
-                                      onGenerateTranscription:
-                                          _transcribeWithLemonFox,
+                      IconButton(
+                        icon: Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          color: theme.colorScheme.primary,
+                        ),
+                        tooltip: 'View All Recordings',
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => RecordingsListPage(
+                                allRecordings:
+                                    Hive.box<RecordingEntry>(
+                                      recordingsBoxName,
+                                    ).values.toList()..sort(
+                                      (a, b) => b.dateRecorded.compareTo(
+                                        a.dateRecorded,
+                                      ),
                                     ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 5), // Adjusted from 15
-                      Expanded(
-                        child: ValueListenableBuilder<Box<RecordingEntry>>(
-                          valueListenable: Hive.box<RecordingEntry>(
-                            recordingsBoxName,
-                          ).listenable(),
-                          builder: (context, box, _) {
-                            final allRecordings = box.values.toList()
-                              ..sort(
-                                (a, b) =>
-                                    b.dateRecorded.compareTo(a.dateRecorded),
-                              );
-                            final recentRecordings = allRecordings
-                                .take(2)
-                                .toList();
-                            return ListView.builder(
-                              padding: const EdgeInsets.only(
-                                bottom: 80.0,
-                                top: 8.0,
-                                left: 8.0,
-                                right: 8.0,
+                                onRecordingToggled: (entry) =>
+                                    _togglePlayRecordingItem(
+                                      entry,
+                                      Hive.box<RecordingEntry>(
+                                        recordingsBoxName,
+                                      ).values.toList(),
+                                      playbackContext: 'list',
+                                    ),
+                                playbackProgress: _currentPlaybackProgress,
+                                totalDuration: _currentTotalDuration,
+                                currentlyPlayingFileIdNotifier:
+                                    _currentlyPlayingFileIdNotifier,
+                                isActuallyPlayingNotifier:
+                                    _isActuallyPlayingNotifier,
+                                onSeekRequest: _handleSeek,
+                                onDelete: _handleDismissRecording,
+                                onShareFile: _shareRecordingFile,
+                                onShareTranscription: _shareTranscriptionText,
+                                onRename: _renameRecording,
+                                onEditCategory: _editRecordingCategory,
+                                onToggleHidden: _moveToVault,
+                                onGenerateTranscription:
+                                    _transcribeWithLemonFox,
                               ),
-                              itemCount: recentRecordings.length,
-                              itemBuilder: (context, index) {
-                                final entry = recentRecordings[index];
-                                final isThisCardPlaying =
-                                    _currentlyPlayingFileIdNotifier.value ==
-                                    entry.id;
-                                return RecordingListItemWidget(
-                                  entry: entry,
-                                  isPlaying: isThisCardPlaying,
-                                  isSelected: false,
-                                  onPlayPause: (e) => _togglePlayRecordingItem(
-                                    e,
-                                    recentRecordings,
-                                  ),
-                                  onMoveToVault: _moveToVault,
-                                  onShare: _showShareOptionsDialog,
-                                  onTranscribe: _transcribeWithLemonFox,
-                                  onDelete: _handleDismissRecording,
-                                  playbackProgressNotifier: isThisCardPlaying
-                                      ? _currentPlaybackProgress
-                                      : null,
-                                  isActuallyPlayingNotifier: isThisCardPlaying
-                                      ? _isActuallyPlayingNotifier
-                                      : null,
-                                  totalDuration: isThisCardPlaying
-                                      ? _currentTotalDuration
-                                      : null,
-                                  onSeekRequest: isThisCardPlaying
-                                      ? _handleSeek
-                                      : null,
-                                );
-                              },
-                            );
-                          },
-                        ),
+                            ),
+                          );
+                        },
                       ),
                     ],
-                  );
-                },
-              ),
-            ),
-          ),
-        );
-      },
+                  ),
+                ),
+                const SizedBox(height: 5), // Adjusted from 15
+                Expanded(
+                  child: ValueListenableBuilder<Box<RecordingEntry>>(
+                    valueListenable: Hive.box<RecordingEntry>(
+                      recordingsBoxName,
+                    ).listenable(),
+                    builder: (context, box, _) {
+                      final allRecordings = box.values.toList()
+                        ..sort(
+                          (a, b) => b.dateRecorded.compareTo(a.dateRecorded),
+                        );
+                      final recentRecordings = allRecordings.take(2).toList();
+                      return ListView.builder(
+                        padding: const EdgeInsets.only(
+                          bottom: 80.0,
+                          top: 8.0,
+                          left: 8.0,
+                          right: 8.0,
+                        ),
+                        itemCount: recentRecordings.length,
+                        itemBuilder: (context, index) {
+                          final entry = recentRecordings[index];
+                          final isThisCardPlaying =
+                              _currentlyPlayingFileIdNotifier.value == entry.id;
+                          return RecordingListItemWidget(
+                            entry: entry,
+                            isPlaying: isThisCardPlaying,
+                            isSelected: false,
+                            onPlayPause: (e) =>
+                                _togglePlayRecordingItem(e, recentRecordings),
+                            onMoveToVault: _moveToVault,
+                            onShare: _showShareOptionsDialog,
+                            onTranscribe: _transcribeWithLemonFox,
+                            onDelete: _handleDismissRecording,
+                            playbackProgressNotifier: isThisCardPlaying
+                                ? _currentPlaybackProgress
+                                : null,
+                            isActuallyPlayingNotifier: isThisCardPlaying
+                                ? _isActuallyPlayingNotifier
+                                : null,
+                            totalDuration: isThisCardPlaying
+                                ? _currentTotalDuration
+                                : null,
+                            onSeekRequest: isThisCardPlaying
+                                ? _handleSeek
+                                : null,
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
     );
 
-    if (_selectedMethod == HiddenAccessTriggerMethod.pinchInScreen ||
-        _selectedMethod == HiddenAccessTriggerMethod.pinchOutScreen) {
-      return GestureDetector(
-        onScaleStart: _isGestureAccessActive ? null : _handleScreenScaleStart,
-        onScaleUpdate: _isGestureAccessActive ? null : _handleScreenScaleUpdate,
-        onScaleEnd: _isGestureAccessActive ? null : _handleScreenScaleEnd,
-        behavior: HitTestBehavior.opaque,
-        child: mainScaffoldContent,
-      );
-    } else {
-      return mainScaffoldContent;
-    }
-  }
-
-  Future<Map<String, dynamic>?> _showAddCategoryDialog() async {
-    // Implementation for adding a new category
-    // This would show a dialog and return the new category data
-    return null;
-  }
-
-  Future<void> _handleEditCustomCategory(
-    Map<String, dynamic> categoryData,
-  ) async {
-    // Implementation for editing a custom category
-  }
-
-  Future<void> _handleDeleteCustomCategory(String categoryId) async {
-    // Implementation for deleting a custom category
+    // --- Add persistent transcription progress bar overlay ---
+    return Stack(
+      children: [
+        if (_selectedMethod == HiddenAccessTriggerMethod.pinchInScreen ||
+            _selectedMethod == HiddenAccessTriggerMethod.pinchOutScreen)
+          GestureDetector(
+            onScaleStart: _isGestureAccessActive
+                ? null
+                : _handleScreenScaleStart,
+            onScaleUpdate: _isGestureAccessActive
+                ? null
+                : _handleScreenScaleUpdate,
+            onScaleEnd: _isGestureAccessActive ? null : _handleScreenScaleEnd,
+            behavior: HitTestBehavior.opaque,
+            child: mainScaffoldContent,
+          )
+        else
+          mainScaffoldContent,
+        // Overlay the progress bar at the bottom if transcribing
+        Consumer<TranscriptionStatusProvider>(
+          builder: (context, transcriptionStatus, _) {
+            if (!transcriptionStatus.isTranscribing) return SizedBox.shrink();
+            return Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: TranscriptionProgressBar(
+                progress: transcriptionStatus.progress,
+                statusText: transcriptionStatus.statusText,
+              ),
+            );
+          },
+        ),
+      ],
+    );
   }
 }
 
@@ -1653,7 +1618,6 @@ class RecordingPermissionException implements Exception {
   String toString() => 'RecordingPermissionException: $message';
 }
 
-// Define HiddenAccessTriggerMethod if not already defined elsewhere
 enum HiddenAccessTriggerMethod {
   longPressAppBar,
   tripleTapAppBar,

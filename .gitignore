@@ -32,6 +32,28 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
+.metadata
+
+# Secrets
+.env
+*.jks
+key.properties
+local.properties
+
+# iOS/macOS
+ios/Pods/
+ios/Podfile.lock
+ios/.symlinks/
+ios/Flutter/App.framework
+ios/Flutter/engine.version
+macos/Pods/
+macos/Podfile.lock
+macos/.symlinks/
+macos/Flutter/ephemeral
+
+# Windows/Linux
+windows/flutter/ephemeral
+linux/flutter/ephemeral
 
 # Symbolication related
 app.*.symbols
