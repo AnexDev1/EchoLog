@@ -695,7 +695,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: _buildSettingsItem(
                 icon: Icons.info_outline,
                 title: 'App Version',
-                subtitle: '2.1.4', // Replace with dynamic version later
+                subtitle: '2.2.5',
                 trailing: const SizedBox.shrink(),
                 onTap: null,
               ),

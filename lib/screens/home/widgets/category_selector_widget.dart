@@ -7,11 +7,11 @@ import 'package:provider/provider.dart';
 import 'package:echolog/models/custom_category.dart';
 import 'package:echolog/main.dart'; // For customCategoriesBoxName
 import 'package:echolog/widgets/dialogs/add_category_dialog.dart';
-import 'package:echolog/screens/home/widgets/neumorphic_category_tag.dart';
-import 'package:echolog/screens/home/widgets/glassmorphic_category_tag.dart';
-import 'package:echolog/screens/home/widgets/original_category_tag.dart';
-import 'package:echolog/screens/home/widgets/pill_category_tag.dart';
-import 'package:echolog/screens/home/widgets/shadow_chip_category_tag.dart';
+import 'package:echolog/screens/home/widgets/category_tags/neumorphic_category_tag.dart';
+import 'package:echolog/screens/home/widgets/category_tags/glassmorphic_category_tag.dart';
+import 'package:echolog/screens/home/widgets/category_tags/original_category_tag.dart';
+import 'package:echolog/screens/home/widgets/category_tags/pill_category_tag.dart';
+import 'package:echolog/screens/home/widgets/category_tags/shadow_chip_category_tag.dart';
 
 class CategorySelectorWidget extends StatefulWidget {
   final List<Map<String, dynamic>> predefinedCategories;
