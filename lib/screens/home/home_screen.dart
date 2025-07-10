@@ -618,7 +618,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       // Gemini prompt: Let Gemini know to transcribe and keep the language
       final prompt = [
         Part.text(
-          'Transcribe the following audio. If the speaker uses multiple languages (e.g., English and Amharic), transcribe each part in the language it was spoken. Do not translate. The output should include all languages as spoken in the audio.',
+          'Transcribe the following audio. If the speaker uses multiple languages (e.g., English and Amharic), transcribe each part in the language it was spoken. Do not translate. The output should include all languages as spoken in the audio, make sure you recognize afan oromoo or tigigna or any other ethiopian languages really well.',
         ),
         Part.inline(InlineData(data: base64Audio, mimeType: 'audio/aac')),
       ];

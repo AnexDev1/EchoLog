@@ -2,13 +2,13 @@
 import 'dart:async';
 import 'dart:ui';
 
+import 'package:animated_text_kit/animated_text_kit.dart';
 import 'package:echolog/models/recording_entry.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter_gemini/flutter_gemini.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:google_fonts/google_fonts.dart';
-
-// Import the TranscriptionProgressWidget (move to a shared location if needed)
-import 'package:echolog/widgets/transcription_progress_widget.dart';
 import 'package:intl/intl.dart';
 
 class RecordingCard extends StatefulWidget {
@@ -75,6 +75,12 @@ class _RecordingCardState extends State<RecordingCard>
   Ticker? _realtimeTicker;
   Duration? _lastTickElapsed;
   Duration? _seekedTo;
+
+  String? _aiResponse;
+  bool _isGettingAIResponse = false;
+  bool _isAIResponseHidden = false;
+  Stream<String>? _aiResponseStream;
+  String _streamedAIResponse = '';
 
   @override
   void initState() {
@@ -351,37 +357,20 @@ class _RecordingCardState extends State<RecordingCard>
       durationToDisplay = _formatDuration(widget.recording.duration);
     }
 
-    if (widget.isPlaying && widget.onSeekRequest != null) {
-      return _RealtimeProgressWrapper(
-        builder: (context) => _buildCardContent(
-          context,
-          theme,
-          isDark,
-          dateFormat,
-          timeFormat,
-          transcriptionTextToShow,
-          canExpand,
-          elapsedDuration,
-          durationToDisplay,
-          fullTranscription,
-          summaryPreview,
-        ),
-      );
-    } else {
-      return _buildCardContent(
-        context,
-        theme,
-        isDark,
-        dateFormat,
-        timeFormat,
-        transcriptionTextToShow,
-        canExpand,
-        elapsedDuration,
-        durationToDisplay,
-        fullTranscription,
-        summaryPreview,
-      );
-    }
+    // Remove audio playing feature when card is clicked
+    return _buildCardContent(
+      context,
+      theme,
+      isDark,
+      dateFormat,
+      timeFormat,
+      transcriptionTextToShow,
+      canExpand,
+      elapsedDuration,
+      durationToDisplay,
+      fullTranscription,
+      summaryPreview,
+    );
   }
 
   Widget _buildCardContent(
@@ -436,7 +425,8 @@ class _RecordingCardState extends State<RecordingCard>
           child: Material(
             color: Colors.transparent,
             child: InkWell(
-              onTap: widget.onSelect ?? widget.onPlayToggle,
+              // Only allow selection, not play/pause on card tap
+              onTap: widget.onSelect,
               onLongPress: widget.onLongPress,
               borderRadius: BorderRadius.circular(20),
               child: Container(
@@ -547,6 +537,27 @@ class _RecordingCardState extends State<RecordingCard>
     );
   }
 
+  Stream<String> _getAIResponseStream(String transcription) async* {
+    final gemini = Gemini.instance;
+    final prompt = [
+      Part.text(
+        'Analyze the following transcription. If it is a question, answer it. If it describes an achievement, congratulate and give tips. If it expresses sadness, give appreciation and encouragement. Always reply in the same language as the transcription., be friendly , feel like natural and human generated , use icons and emojis as needed',
+      ),
+      Part.text(transcription),
+    ];
+    try {
+      await for (final value in gemini.promptStream(parts: prompt)) {
+        yield value?.output ?? '';
+      }
+    } catch (e) {
+      if (e.toString().contains('429')) {
+        yield '🚫 Gemini API quota exceeded. Please try again later or check your usage limits.';
+      } else {
+        yield '❗️ An error occurred: ${e.toString()}';
+      }
+    }
+  }
+
   Widget _buildTranscriptionSection(
     String transcriptionTextToShow,
     bool canExpand,
@@ -627,6 +638,119 @@ class _RecordingCardState extends State<RecordingCard>
                   : TextOverflow.ellipsis,
             ),
           ),
+          if (_isGettingAIResponse)
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? const Color(0xFF232347)
+                      : const Color(0xFFE3F2FD),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.smart_toy_outlined,
+                      color: isDark
+                          ? const Color(0xFF90CAF9)
+                          : const Color(0xFF1976D2),
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: _streamedAIResponse.isEmpty
+                            ? AnimatedTextKit(
+                                animatedTexts: [
+                                  TypewriterAnimatedText(
+                                    'Generating response...',
+                                    textStyle: GoogleFonts.inter(
+                                      fontSize: 13,
+                                      color: isDark
+                                          ? const Color(0xFF90CAF9)
+                                          : const Color(0xFF1976D2),
+                                      fontWeight: FontWeight.w600,
+                                      height: 1.5,
+                                    ),
+                                    speed: const Duration(milliseconds: 60),
+                                  ),
+                                ],
+                                isRepeatingAnimation: true,
+                                repeatForever: true,
+                              )
+                            : MarkdownBody(
+                                data: _streamedAIResponse,
+                                styleSheet:
+                                    MarkdownStyleSheet.fromTheme(
+                                      Theme.of(context),
+                                    ).copyWith(
+                                      p: GoogleFonts.inter(
+                                        fontSize: 13,
+                                        color: isDark
+                                            ? const Color(0xFF90CAF9)
+                                            : const Color(0xFF1976D2),
+                                        fontWeight: FontWeight.w600,
+                                        height: 1.5,
+                                      ),
+                                    ),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (_aiResponse != null &&
+              !_isAIResponseHidden &&
+              !_isGettingAIResponse)
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? const Color(0xFF232347)
+                      : const Color(0xFFE3F2FD),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.smart_toy_outlined,
+                      color: isDark
+                          ? const Color(0xFF90CAF9)
+                          : const Color(0xFF1976D2),
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: MarkdownBody(
+                          data: _aiResponse!,
+                          styleSheet:
+                              MarkdownStyleSheet.fromTheme(
+                                Theme.of(context),
+                              ).copyWith(
+                                p: GoogleFonts.inter(
+                                  fontSize: 13,
+                                  color: isDark
+                                      ? const Color(0xFF90CAF9)
+                                      : const Color(0xFF1976D2),
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.5,
+                                ),
+                              ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -894,6 +1018,34 @@ class _RecordingCardState extends State<RecordingCard>
           ),
         );
       }
+
+      if (_aiResponse == null) {
+        items.add(
+          _buildMenuItem(
+            'get_ai_response',
+            Icons.smart_toy_outlined,
+            'Get AI Response',
+          ),
+        );
+      } else {
+        if (_isAIResponseHidden) {
+          items.add(
+            _buildMenuItem(
+              'show_ai_response',
+              Icons.visibility_outlined,
+              'Show AI Response',
+            ),
+          );
+        } else {
+          items.add(
+            _buildMenuItem(
+              'hide_ai_response',
+              Icons.visibility_off_outlined,
+              'Hide AI Response',
+            ),
+          );
+        }
+      }
     }
 
     if (widget.onMoveToVault != null && widget.isVaultAvailable) {
@@ -986,6 +1138,42 @@ class _RecordingCardState extends State<RecordingCard>
         setState(() => _isTranscriptionHidden = false);
         widget.onShowTranscription?.call();
         break;
+      case 'get_ai_response':
+        if (fullTranscription != null && fullTranscription.isNotEmpty) {
+          setState(() {
+            _isAIResponseHidden = false;
+            _isGettingAIResponse = true;
+            _aiResponse = null;
+            _aiResponseStream = _getAIResponseStream(fullTranscription);
+            _streamedAIResponse = '';
+          });
+          _aiResponseStream?.listen(
+            (chunk) {
+              setState(() {
+                _streamedAIResponse += chunk;
+              });
+            },
+            onDone: () {
+              setState(() {
+                _aiResponse = _streamedAIResponse;
+                _isGettingAIResponse = false;
+                _aiResponseStream = null;
+                // TODO: Persist AI response for this recording
+              });
+            },
+          );
+        }
+        break;
+      case 'show_ai_response':
+        setState(() {
+          _isAIResponseHidden = false;
+        });
+        break;
+      case 'hide_ai_response':
+        setState(() {
+          _isAIResponseHidden = true;
+        });
+        break;
     }
   }
 
@@ -1010,6 +1198,77 @@ class _RecordingCardState extends State<RecordingCard>
         );
       },
     );
+  }
+
+  // Add this method to RecordingCardState
+  Future<void> _showAIResponseDialog(
+    BuildContext context,
+    String transcription,
+  ) async {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext dialogContext) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          child: FutureBuilder<String>(
+            future: _getAIResponse(transcription),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return Container(
+                  padding: const EdgeInsets.all(32),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).dialogBackgroundColor,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(),
+                      const SizedBox(height: 20),
+                      Text('Getting AI response...'),
+                    ],
+                  ),
+                );
+              } else if (snapshot.hasError) {
+                return Container(
+                  padding: const EdgeInsets.all(32),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).dialogBackgroundColor,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text('Error: \\${snapshot.error}'),
+                );
+              } else {
+                return Container(
+                  padding: const EdgeInsets.all(32),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).dialogBackgroundColor,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(snapshot.data ?? ''),
+                );
+              }
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  // Add this method to RecordingCardState
+  Future<String> _getAIResponse(String transcription) async {
+    // Use Gemini to analyze the transcription and generate a context-aware response
+    // The prompt should instruct Gemini to answer questions, congratulate achievements, give tips, or provide appreciation/support, and reply in the same language
+    final gemini = Gemini.instance;
+    final prompt = [
+      Part.text(
+        'Analyze the following transcription. If it is a question, answer it. If it describes an achievement, congratulate and give tips. If it expresses sadness, give appreciation and encouragement. Always reply in the same language as the transcription.',
+      ),
+      Part.text(transcription),
+    ];
+    final response = await gemini.prompt(parts: prompt);
+    return response?.output ?? 'No response.';
   }
 }
 

@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -42,13 +42,13 @@ class _TranscriptionProgressWidgetState
     TranscriptionStage(
       title: "Initializing",
       description: "Preparing audio analysis...",
-      duration: Duration(milliseconds: 1200),
+      duration: Duration(milliseconds: 1600),
       icon: Icons.settings_outlined,
     ),
     TranscriptionStage(
       title: "Detecting Language",
       description: "Analyzing speech patterns...",
-      duration: Duration(milliseconds: 1800),
+      duration: Duration(milliseconds: 2200),
       icon: Icons.language_outlined,
     ),
     TranscriptionStage(
@@ -66,13 +66,13 @@ class _TranscriptionProgressWidgetState
     TranscriptionStage(
       title: "Refining Results",
       description: "Improving accuracy and formatting...",
-      duration: Duration(milliseconds: 1800),
+      duration: Duration(milliseconds: 2800),
       icon: Icons.auto_fix_high_outlined,
     ),
     TranscriptionStage(
       title: "Finalizing",
       description: "Preparing transcription...",
-      duration: Duration(milliseconds: 1000),
+      duration: Duration(milliseconds: 1700),
       icon: Icons.check_circle_outline,
     ),
   ];
@@ -86,17 +86,17 @@ class _TranscriptionProgressWidgetState
 
   void _setupAnimations() {
     _progressController = AnimationController(
-      duration: const Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 1000),
       vsync: this,
     );
 
     _pulseController = AnimationController(
-      duration: const Duration(milliseconds: 1500),
+      duration: const Duration(milliseconds: 1900),
       vsync: this,
     );
 
     _fadeController = AnimationController(
-      duration: const Duration(milliseconds: 600),
+      duration: const Duration(milliseconds: 700),
       vsync: this,
     );
 

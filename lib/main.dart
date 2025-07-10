@@ -37,7 +37,7 @@ Future<void> main() async {
   await Hive.initFlutter(appDocumentDir.path);
 
   // Gemini API initialization
-  const apiKey = 'AIzaSyD_T1TccSIXrgxmvu_bW1FUiIXImCYKOP8';
+  const apiKey = 'AIzaSyCk5zjTPGin6IwZDF83x8TaE0BOtIlQeYg';
   Gemini.init(apiKey: apiKey);
 
   if (!Hive.isAdapterRegistered(ColorAdapter().typeId)) {
