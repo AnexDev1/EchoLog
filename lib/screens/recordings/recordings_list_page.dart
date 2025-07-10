@@ -72,8 +72,10 @@ class _RecordingsListPageState extends State<RecordingsListPage>
   void initState() {
     super.initState();
     // Prevent auto-play of latest recording on page open
-    widget.currentlyPlayingFileIdNotifier.value = null;
-    widget.isActuallyPlayingNotifier.value = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.currentlyPlayingFileIdNotifier.value = null;
+      widget.isActuallyPlayingNotifier.value = false;
+    });
     _initializeAnimations();
     _setupListeners();
   }

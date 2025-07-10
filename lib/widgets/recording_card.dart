@@ -61,6 +61,7 @@ class _RecordingCardState extends State<RecordingCard>
     with TickerProviderStateMixin {
   late final ValueNotifier<double> _progressNotifier;
   bool _wasPlayingBeforeDrag = false;
+  bool _isDragging = false;
   bool _isTranscriptionExpanded = false;
   bool _isTranscriptionHidden = false;
   bool _isHovered = false;
@@ -115,9 +116,10 @@ class _RecordingCardState extends State<RecordingCard>
         _pulseController.stop();
       }
     }
-    if (widget.playbackProgressPercent != oldWidget.playbackProgressPercent) {
+    // Only update local progress from parent if not dragging
+    if (!_isDragging &&
+        widget.playbackProgressPercent != oldWidget.playbackProgressPercent) {
       _playbackProgressPercentLocal = widget.playbackProgressPercent;
-      // Avoid updating during build
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _progressNotifier.value = _playbackProgressPercentLocal;
       });
@@ -139,10 +141,12 @@ class _RecordingCardState extends State<RecordingCard>
       if (_realtimeTicker == null) {
         _realtimeTicker = createTicker((Duration elapsed) {
           if (!mounted) return;
+          if (_isDragging)
+            return; // Prevent ticker from updating progress while dragging
           final totalMs = widget.recording.duration.inMilliseconds;
           if (totalMs > 0) {
             Duration base = _seekedTo ?? Duration.zero;
-            Duration sinceSeek = elapsed - (_lastTickElapsed ?? Duration.zero);
+            Duration sinceSeek = elapsed;
             double progress = (base + sinceSeek).inMilliseconds / totalMs;
             progress = progress.clamp(0.0, 1.0);
             if (progress >= 1.0) {
@@ -153,29 +157,23 @@ class _RecordingCardState extends State<RecordingCard>
             }
             _playbackProgressPercentLocal = progress;
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted)
+              if (mounted && !_isDragging) {
                 _progressNotifier.value = _playbackProgressPercentLocal;
+              }
             });
           }
         });
-        _lastTickElapsed = Duration.zero;
-        _seekedTo = Duration(
-          milliseconds:
-              (_playbackProgressPercentLocal *
-                      widget.recording.duration.inMilliseconds)
-                  .round(),
-        );
-        _realtimeTicker!.start();
-      } else if (!_realtimeTicker!.isActive) {
-        _lastTickElapsed = Duration.zero;
-        _seekedTo = Duration(
-          milliseconds:
-              (_playbackProgressPercentLocal *
-                      widget.recording.duration.inMilliseconds)
-                  .round(),
-        );
-        _realtimeTicker!.start();
       }
+      // Always reset ticker base and seekedTo when starting playback
+      _realtimeTicker!.stop();
+      _lastTickElapsed = Duration.zero;
+      _seekedTo = Duration(
+        milliseconds:
+            (_playbackProgressPercentLocal *
+                    widget.recording.duration.inMilliseconds)
+                .round(),
+      );
+      _realtimeTicker!.start();
     } else {
       _realtimeTicker?.stop();
     }
@@ -644,10 +642,16 @@ class _RecordingCardState extends State<RecordingCard>
         final barHeight = 6.0;
         final thumbRadius = 8.0;
         final thumbVisible =
-            _isPlayingLocal || _playbackProgressPercentLocal > 0.02;
-        // currentProgress is now passed in from ValueListenableBuilder
+            _isDragging ||
+            _isPlayingLocal ||
+            _playbackProgressPercentLocal > 0.02;
+        // Use drag progress if dragging, otherwise use currentProgress
+        // Only update _playbackProgressPercentLocal from drag, not from ticker, while dragging
+        final double progressValue = _isDragging
+            ? _dragProgress
+            : currentProgress;
         final progressWidth =
-            constraints.maxWidth * currentProgress.clamp(0.0, 1.0);
+            constraints.maxWidth * progressValue.clamp(0.0, 1.0);
         return SizedBox(
           height: 24,
           child: Stack(
@@ -722,6 +726,7 @@ class _RecordingCardState extends State<RecordingCard>
                         details.localPosition.dx / constraints.maxWidth;
                     _wasPlayingBeforeDrag = _isPlayingLocal;
                     setState(() {
+                      _isDragging = true;
                       _dragProgress = progress.clamp(0.0, 1.0);
                       // Only pause if it was playing
                       if (_isPlayingLocal) {
@@ -736,12 +741,13 @@ class _RecordingCardState extends State<RecordingCard>
                         details.localPosition.dx / constraints.maxWidth;
                     setState(() {
                       _dragProgress = progress.clamp(0.0, 1.0);
-                      _playbackProgressPercentLocal = _dragProgress;
-                      _progressNotifier.value = _playbackProgressPercentLocal;
+                      // Do NOT update _playbackProgressPercentLocal here, only update the notifier for UI
+                      _progressNotifier.value = _dragProgress;
                     });
                   },
                   onPanEnd: (details) {
                     setState(() {
+                      _isDragging = false;
                       _playbackProgressPercentLocal = _dragProgress;
                       _progressNotifier.value = _playbackProgressPercentLocal;
                       // Update ticker base for seamless resume
@@ -817,12 +823,13 @@ class _RecordingCardState extends State<RecordingCard>
                     _pulseController.stop();
                     _realtimeTicker?.stop();
                   } else {
-                    _isPlayingLocal = true;
-                    _pulseController.repeat(reverse: true);
                     // If at end, reset progress
                     if (_playbackProgressPercentLocal >= 1.0) {
                       _playbackProgressPercentLocal = 0.0;
+                      _progressNotifier.value = 0.0;
                     }
+                    _isPlayingLocal = true;
+                    _pulseController.repeat(reverse: true);
                     _maybeStartOrStopTicker();
                   }
                 });

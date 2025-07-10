@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:echolog/main.dart';
 import 'package:echolog/models/recording_entry.dart';
+import 'package:echolog/providers/streak_provider.dart';
 import 'package:echolog/providers/transcription_status_provider.dart';
 import 'package:echolog/screens/home/widgets/category_selector_widget.dart';
 import 'package:echolog/services/password_service.dart';
@@ -487,14 +488,19 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
               transcription: null,
             );
             await box.put(newEntry.id, newEntry);
-            debugPrint('Saved to Hive. Box keys: ${box.keys}');
-            debugPrint('Box length: ${box.length}');
+            debugPrint('Saved to Hive. Box keys: \\${box.keys}');
+            debugPrint('Box length: \\${box.length}');
             for (var k in box.keys) {
               final e = box.get(k);
               debugPrint(
-                'Entry: id=${e?.id}, displayName=${e?.displayName}, filePath=${e?.filePath}',
+                'Entry: id=\\${e?.id}, displayName=\\${e?.displayName}, filePath=\\${e?.filePath}',
               );
             }
+            // Increment streak for hidden recordings as well
+            await Provider.of<StreakProvider>(
+              context,
+              listen: false,
+            ).onNewRecording();
             if (mounted) {
               setState(() {}); // Force UI refresh
               showCustomSnackBar(
@@ -691,13 +697,7 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
           final box = Hive.box<RecordingEntry>(hiddenRecordingsBoxName);
           entry.transcription = transcriptText;
           await box.put(entry.id, entry);
-          if (mounted) {
-            showCustomSnackBar(
-              context: context,
-              message: 'Transcription complete!',
-              iconColor: Colors.green,
-            );
-          }
+          // Removed: showCustomSnackBar for 'Transcription complete!'
         } else {
           throw Exception('Transcription text not found.');
         }

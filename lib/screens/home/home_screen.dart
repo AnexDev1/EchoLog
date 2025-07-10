@@ -642,11 +642,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           entry.transcription = transcriptText;
           await recordingsBox.put(entry.id, entry);
           transcriptionStatus.finishTranscription();
-          showCustomSnackBar(
-            context: context,
-            message: 'Transcription complete!',
-            iconColor: Colors.green,
-          );
+          // Removed: showCustomSnackBar for 'Transcription complete!'
         } else {
           transcriptionStatus.failTranscription(
             'Transcription text not found.',
