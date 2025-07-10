@@ -1,222 +1,329 @@
-import 'package:echolog/services/recording_service.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+/// Professional recording controls widget with modern design patterns
 class RecordingControlsWidget extends StatelessWidget {
-  final bool isRecording;
-  final bool isRecordingPaused;
-  final Duration recordingDuration;
-  final Map<String, dynamic>? selectedCategoryData;
-  final bool isRecorderInitialized;
-  final VoidCallback onStartStopRecording;
-  final VoidCallback onTogglePausePlayRecording;
-  final Color recordIconColor;
-
-  static const double _buttonCircularDiameter = 80.0;
-  static const double _iconSize = 40.0;
-  static const Duration _animationDuration = Duration(milliseconds: 400);
-
   const RecordingControlsWidget({
     super.key,
-    required this.isRecording,
-    required this.isRecordingPaused,
-    required this.recordingDuration,
-    required this.selectedCategoryData,
-    required this.isRecorderInitialized,
-    required this.onStartStopRecording,
-    required this.onTogglePausePlayRecording,
-    required this.recordIconColor,
-    required Color waveformColor,
+    required this.state,
+    required this.onStartStop,
+    required this.onTogglePause,
+    this.category,
   });
+
+  final RecordingState state;
+  final VoidCallback onStartStop;
+  final VoidCallback onTogglePause;
+  final RecordingCategory? category;
 
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    bool categorySelected = selectedCategoryData != null;
-
-    double targetWidth = _buttonCircularDiameter;
-    double targetHeight = _buttonCircularDiameter;
-    BorderRadius targetBorderRadius = BorderRadius.circular(
-      _buttonCircularDiameter / 2,
+    return AnimatedSwitcher(
+      duration: _Constants.animationDuration,
+      transitionBuilder: (child, animation) => ScaleTransition(
+        scale: animation,
+        child: FadeTransition(opacity: animation, child: child),
+      ),
+      child: state.isRecording
+          ? _RecordingBar(
+              key: const ValueKey('recording'),
+              state: state,
+              category: category,
+              onStop: onStartStop,
+              onTogglePause: onTogglePause,
+            )
+          : _RecordButton(
+              key: const ValueKey('button'),
+              state: state,
+              category: category,
+              onStart: onStartStop,
+            ),
     );
+  }
+}
 
-    Color targetBackgroundColor;
-    List<BoxShadow> targetBoxShadow;
+/// Immutable state object for recording controls
+class RecordingState {
+  const RecordingState({
+    required this.isRecording,
+    required this.isPaused,
+    required this.duration,
+    required this.isInitialized,
+  });
 
-    bool isActiveState =
-        (categorySelected && isRecorderInitialized && !isRecording) ||
-        isRecording;
+  final bool isRecording;
+  final bool isPaused;
+  final Duration duration;
+  final bool isInitialized;
 
-    if (isRecording) {
-      targetWidth = MediaQuery.of(context).size.width * 0.5;
-      targetHeight = 65.0;
-      targetBorderRadius = BorderRadius.circular(35.0);
+  bool get canRecord => isInitialized && !isRecording;
+  bool get isActive => isRecording || canRecord;
+}
 
-      if (categorySelected &&
-          selectedCategoryData != null &&
-          selectedCategoryData?['color'] != null) {
-        targetBackgroundColor = selectedCategoryData?['color'] as Color;
-      } else if (theme.brightness == Brightness.light) {
-        targetBackgroundColor = theme.colorScheme.surfaceContainerHigh;
-      } else {
-        targetBackgroundColor = theme.colorScheme.surface.withOpacity(0.95);
-      }
+/// Category configuration for recording
+class RecordingCategory {
+  const RecordingCategory({
+    required this.name,
+    required this.color,
+    required this.iconColor,
+  });
 
-      targetBoxShadow = [
-        BoxShadow(
-          color: theme.shadowColor.withOpacity(0.35),
-          blurRadius: 8,
-          spreadRadius: 1,
-          offset: const Offset(0, 3),
-        ),
-      ];
-    } else {
-      if (categorySelected && isRecorderInitialized) {
-        // Use a whitish color for the circular recording button
-        targetBackgroundColor = Colors.white;
-      } else {
-        targetBackgroundColor = theme.colorScheme.surfaceContainerHighest;
-      }
-      targetBoxShadow = [
-        BoxShadow(
-          color: theme.shadowColor.withOpacity(isActiveState ? 0.25 : 0.15),
-          blurRadius: isActiveState ? 6 : 4,
-          spreadRadius: isActiveState ? 1 : 0,
-          offset: const Offset(0, 2),
-        ),
-      ];
-    }
+  final String name;
+  final Color color;
+  final Color iconColor;
+}
 
-    bool canInteractOverall =
-        (categorySelected || isRecording) && isRecorderInitialized;
+/// Constants for consistent styling
+class _Constants {
+  static const double buttonSize = 72.0;
+  static const double iconSize = 32.0;
+  static const double barHeight = 56.0;
+  static const double barMinWidth = 200.0;
+  static const double stopButtonSize = 24.0;
+  static const Duration animationDuration = Duration(milliseconds: 300);
+  static const EdgeInsets contentPadding = EdgeInsets.symmetric(
+    horizontal: 16.0,
+  );
+}
+
+/// Circular record button component
+class _RecordButton extends StatelessWidget {
+  const _RecordButton({
+    super.key,
+    required this.state,
+    required this.onStart,
+    this.category,
+  });
+
+  final RecordingState state;
+  final VoidCallback onStart;
+  final RecordingCategory? category;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final canInteract = _canInteract;
 
     return GestureDetector(
-      onTap: canInteractOverall
-          ? onStartStopRecording
-          : () {
-              if (!isRecorderInitialized) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'Initializing recorder. Please wait or check permissions.',
-                    ),
-                  ),
-                );
-              } else if (!categorySelected && !isRecording) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Please select a mood category first.'),
-                  ),
-                );
-              }
-            },
+      onTap: canInteract ? onStart : () => _showError(context),
       child: AnimatedContainer(
-        duration: _animationDuration,
-        curve: Curves.easeInOutCubic,
-        width: targetWidth,
-        height: targetHeight,
+        duration: _Constants.animationDuration,
+        curve: Curves.easeOutCubic,
+        width: _Constants.buttonSize,
+        height: _Constants.buttonSize,
         decoration: BoxDecoration(
-          color: targetBackgroundColor,
-          borderRadius: targetBorderRadius,
-          boxShadow: targetBoxShadow,
+          color: _buttonColor(theme),
+          shape: BoxShape.circle,
+          boxShadow: _buttonShadow(theme, canInteract),
         ),
-        child: isRecording
-            ? _buildRecordingBarContent(context, theme, targetBackgroundColor)
-            : _buildCircularButtonContent(
-                theme: theme,
-                isActive: categorySelected && isRecorderInitialized,
-              ),
+        child: Icon(
+          Icons.mic_rounded,
+          size: _Constants.iconSize,
+          color: _iconColor(theme, canInteract),
+        ),
       ),
     );
   }
 
-  Widget _buildCircularButtonContent({
-    required ThemeData theme,
-    required bool isActive,
-  }) {
-    Color currentIconColor;
-    if (isActive) {
-      currentIconColor = recordIconColor;
-    } else {
-      currentIconColor = theme.colorScheme.onSurfaceVariant.withOpacity(0.6);
+  bool get _canInteract => state.canRecord && category != null;
+
+  Color _buttonColor(ThemeData theme) {
+    if (!state.isInitialized || category == null) {
+      return theme.colorScheme.surfaceContainerHighest;
     }
+    return theme.colorScheme.surface;
+  }
 
-    return Center(
-      child: Icon(Icons.mic, color: currentIconColor, size: _iconSize),
+  Color _iconColor(ThemeData theme, bool canInteract) {
+    if (!canInteract) {
+      return theme.colorScheme.onSurfaceVariant.withOpacity(0.5);
+    }
+    return category?.iconColor ?? theme.colorScheme.primary;
+  }
+
+  List<BoxShadow> _buttonShadow(ThemeData theme, bool canInteract) {
+    return [
+      BoxShadow(
+        color: theme.shadowColor.withOpacity(canInteract ? 0.2 : 0.1),
+        blurRadius: canInteract ? 8 : 4,
+        offset: Offset(0, canInteract ? 4 : 2),
+      ),
+    ];
+  }
+
+  void _showError(BuildContext context) {
+    final message = !state.isInitialized
+        ? 'Initializing recorder...'
+        : 'Please select a category first';
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(16),
+      ),
+    );
+  }
+}
+
+/// Recording bar with controls
+class _RecordingBar extends StatelessWidget {
+  const _RecordingBar({
+    super.key,
+    required this.state,
+    required this.onStop,
+    required this.onTogglePause,
+    this.category,
+  });
+
+  final RecordingState state;
+  final VoidCallback onStop;
+  final VoidCallback onTogglePause;
+  final RecordingCategory? category;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final screenWidth = MediaQuery.of(context).size.width;
+
+    return AnimatedContainer(
+      duration: _Constants.animationDuration,
+      curve: Curves.easeOutCubic,
+      width: (screenWidth * 0.5).clamp(_Constants.barMinWidth, 300.0),
+      height: _Constants.barHeight,
+      decoration: BoxDecoration(
+        color: _barColor(theme),
+        borderRadius: BorderRadius.circular(_Constants.barHeight / 2),
+        boxShadow: _barShadow(theme),
+      ),
+      child: Padding(
+        padding: _Constants.contentPadding,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            _StopButton(onStop: onStop),
+            _DurationDisplay(duration: state.duration),
+            _PauseButton(
+              isPaused: state.isPaused,
+              onToggle: onTogglePause,
+              iconColor: _iconColor(theme),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
-  Widget _buildRecordingBarContent(
-    BuildContext context,
-    ThemeData theme,
-    Color targetBackgroundColor,
-  ) {
-    Color iconColorOnBar =
-        selectedCategoryData?['iconColor'] as Color? ??
-        (theme.brightness == Brightness.light
-            ? theme.colorScheme.onSurface
-            : theme.colorScheme.primary);
-    Color durationTextColor = theme.colorScheme.onSurface;
+  Color _barColor(ThemeData theme) {
+    return category?.color.withOpacity(0.1) ??
+        theme.colorScheme.surfaceContainerHigh;
+  }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: <Widget>[
-          GestureDetector(
-            onTap: onStartStopRecording,
-            child: Container(
-              padding: const EdgeInsets.all(10.0),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.error,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: theme.shadowColor.withOpacity(0.25),
-                    blurRadius: 3,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
-              ),
-              child: Container(
-                width: 16,
-                height: 16,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.onError,
-                  borderRadius: BorderRadius.circular(3),
-                ),
-              ),
-            ),
-          ),
-          Expanded(
-            child: Center(
-              child: Text(
-                formatDuration(recordingDuration),
-                style: GoogleFonts.poppins(
-                  color: durationTextColor,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.5,
-                ),
-              ),
-            ),
-          ),
-          IconButton(
-            icon: Icon(
-              isRecordingPaused
-                  ? Icons.play_arrow_rounded
-                  : Icons.pause_rounded,
-              color: iconColorOnBar,
-              size: 34,
-            ),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            tooltip: isRecordingPaused ? 'Resume' : 'Pause',
-            onPressed: onTogglePausePlayRecording,
-          ),
-        ],
+  Color _iconColor(ThemeData theme) {
+    return category?.iconColor ?? theme.colorScheme.onSurface;
+  }
+
+  List<BoxShadow> _barShadow(ThemeData theme) {
+    return [
+      BoxShadow(
+        color: theme.shadowColor.withOpacity(0.15),
+        blurRadius: 12,
+        offset: const Offset(0, 6),
       ),
+    ];
+  }
+}
+
+/// Stop recording button
+class _StopButton extends StatelessWidget {
+  const _StopButton({required this.onStop});
+
+  final VoidCallback onStop;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return GestureDetector(
+      onTap: onStop,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: theme.colorScheme.error,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: theme.colorScheme.error.withOpacity(0.3),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Icon(
+          Icons.stop_rounded,
+          color: theme.colorScheme.onError,
+          size: _Constants.stopButtonSize,
+        ),
+      ),
+    );
+  }
+}
+
+/// Duration display component
+class _DurationDisplay extends StatelessWidget {
+  const _DurationDisplay({required this.duration});
+
+  final Duration duration;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Text(
+      _formatDuration(duration),
+      style: GoogleFonts.inter(
+        color: theme.colorScheme.onSurface,
+        fontSize: 16,
+        fontWeight: FontWeight.w500,
+        letterSpacing: 0.5,
+      ),
+    );
+  }
+
+  String _formatDuration(Duration duration) {
+    final minutes = duration.inMinutes;
+    final seconds = duration.inSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+}
+
+/// Pause/play toggle button
+class _PauseButton extends StatelessWidget {
+  const _PauseButton({
+    required this.isPaused,
+    required this.onToggle,
+    required this.iconColor,
+  });
+
+  final bool isPaused;
+  final VoidCallback onToggle;
+  final Color iconColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      onPressed: onToggle,
+      icon: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 200),
+        child: Icon(
+          isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+          key: ValueKey(isPaused),
+          color: iconColor,
+          size: 28,
+        ),
+      ),
+      tooltip: isPaused ? 'Resume' : 'Pause',
     );
   }
 }

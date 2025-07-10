@@ -378,7 +378,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       });
   }
 
-  // ...existing code...
   Future<void> _shareRecordingFile(RecordingEntry entry) async {
     await _stopPlaybackAndResetState(); // Stop playback before sharing
     if (entry.filePath.isEmpty) {
@@ -902,7 +901,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           });
       }
     } else {
-      if (_selectedCategoryData == null) {
+      // Defensive: check for valid category selection (not null and has a name)
+      if (_selectedCategoryData == null ||
+          (_selectedCategoryData?['name'] == null) ||
+          (_selectedCategoryData?['name'].toString().trim().isEmpty ?? true)) {
         showCustomSnackBar(
           context: context,
           message: 'Please select a mood category first.',
@@ -1471,29 +1473,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       RecordingControlsWidget(
-                        waveformColor: Colors.red,
-                        isRecording: _isRecording,
-                        isRecordingPaused: _isRecordingPaused,
-                        recordingDuration: _recordingDuration,
-                        selectedCategoryData:
-                            controlsCategoryData ??
-                            {
-                              'name': 'Category',
-                              'emoji': '',
-                              'color': Colors.grey,
-                              'iconColor': Colors.grey.shade200,
-                            },
-                        isRecorderInitialized: _isRecorderInitialized,
-                        // Use a theme-adaptive color for the record icon
-                        recordIconColor: Theme.of(
-                          context,
-                        ).colorScheme.secondary,
-                        onStartStopRecording:
-                            (_selectedCategoryData == null ||
-                                (_player?.isPlaying ?? false))
-                            ? () {}
-                            : _handleStartOrStopRecording,
-                        onTogglePausePlayRecording: _togglePausePlayRecording,
+                        state: RecordingState(
+                          isRecording: _isRecording,
+                          isPaused: _isRecordingPaused,
+                          duration: _recordingDuration,
+                          isInitialized: _isRecorderInitialized,
+                        ),
+                        onStartStop: _handleStartOrStopRecording,
+                        onTogglePause: _togglePausePlayRecording,
+                        category: _selectedCategoryData != null
+                            ? RecordingCategory(
+                                name: _selectedCategoryData?['name'] ?? '',
+                                color: _selectedCategoryData?['color'] ?? theme.colorScheme.primary,
+                                iconColor: _selectedCategoryData?['iconColor'] ?? theme.colorScheme.primary,
+                              )
+                            : null,
                       ),
                       if (_selectedCategoryData == null)
                         Padding(

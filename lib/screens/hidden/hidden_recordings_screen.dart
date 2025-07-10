@@ -669,24 +669,43 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
       }
       return;
     }
+
+    // Decrypt to temp file if encrypted
+    final isEncrypted = entry.filePath.endsWith('.enc');
+    String fileToTranscribe = entry.filePath;
+    File? tempDecryptedFile;
+    if (isEncrypted) {
+      final tempDir = await getTemporaryDirectory();
+      final tempFilePath =
+          '${tempDir.path}/transcribe_${entry.id}_${DateTime.now().millisecondsSinceEpoch}.aac';
+      try {
+        await SecurityService().decryptFile(entry.filePath, tempFilePath);
+        fileToTranscribe = tempFilePath;
+        tempDecryptedFile = File(tempFilePath);
+      } catch (e) {
+        if (mounted) {
+          showCustomSnackBar(
+            context: context,
+            message: 'Error decrypting for transcription.',
+            iconColor: Colors.red,
+          );
+        }
+        return;
+      }
+    }
+
     if (_currentlyPlayingFileId == entry.id) {
       await _stopPlaybackAndResetState();
       await Future.delayed(const Duration(milliseconds: 200));
     }
     if (mounted) setState(() => _isTranscribing = true);
-    if (mounted) {
-      // showCustomSnackBar(
-      //   context: context,
-      //   message: 'Transcribing "${entry.displayName}"...',
-      // );
-    }
     final Uri apiUri = Uri.parse(
       "https://api.lemonfox.ai/v1/audio/transcriptions",
     );
     try {
       var request = http.MultipartRequest('POST', apiUri)
         ..headers['Authorization'] = 'Bearer $_lemonFoxApiKey'
-        ..files.add(await http.MultipartFile.fromPath('file', entry.filePath))
+        ..files.add(await http.MultipartFile.fromPath('file', fileToTranscribe))
         ..fields['response_format'] = 'json';
       final streamedResponse = await request.send();
       final response = await http.Response.fromStream(streamedResponse);
@@ -697,18 +716,19 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
           final box = Hive.box<RecordingEntry>(hiddenRecordingsBoxName);
           entry.transcription = transcriptText;
           await box.put(entry.id, entry);
-          // Removed: showCustomSnackBar for 'Transcription complete!'
         } else {
           throw Exception('Transcription text not found.');
         }
       } else {
-        String errorMessage = "Error ${response.statusCode}";
+        String errorMessage = "Error " + response.statusCode.toString();
         try {
           final Map<String, dynamic> errorData = jsonDecode(response.body);
           errorMessage +=
-              "\n${errorData['detail'] ?? errorData['message'] ?? response.body}";
+              "\n" +
+              (errorData['detail'] ?? errorData['message'] ?? response.body)
+                  .toString();
         } catch (_) {
-          errorMessage += "\n${response.body}";
+          errorMessage += "\n" + response.body;
         }
         throw Exception(errorMessage);
       }
@@ -721,6 +741,12 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
         );
       }
     } finally {
+      // Always dispose decrypted temp file after transcription attempt
+      if (tempDecryptedFile != null && await tempDecryptedFile.exists()) {
+        try {
+          await tempDecryptedFile.delete();
+        } catch (_) {}
+      }
       if (mounted) setState(() => _isTranscribing = false);
     }
   }
@@ -935,7 +961,32 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
                         isPlaying: showAsPlayingButton,
                         onPlayToggle: () => _togglePlayRecordingItem(entry),
                         onShare: () => _showShareOptionsDialog(entry),
-                        onTranscribe: () => _transcribeWithLemonFox(entry),
+                        onTranscribe: () async {
+                          // Show progress dialog immediately, skip prompt
+                          showDialog(
+                            context: context,
+                            barrierDismissible: false,
+                            builder: (BuildContext context) {
+                              final theme = Theme.of(context);
+                              return Dialog(
+                                backgroundColor: Colors.transparent,
+                                child: TranscriptionProgressWidget(
+                                  recordingDuration: entry.duration,
+                                  accentColor: entry.moodColor,
+                                  isDark: theme.brightness == Brightness.dark,
+                                  onCancel: () {
+                                    Navigator.of(context).pop();
+                                  },
+                                ),
+                              );
+                            },
+                          );
+                          // Wait for dialog to show
+                          await Future.delayed(
+                            const Duration(milliseconds: 300),
+                          );
+                          await _transcribeWithLemonFox(entry);
+                        },
                         onDelete: () => _handleDismissHiddenRecording(entry),
                         onMoveToVault: () => _moveOutOfVault(entry),
                         playbackProgressPercent: progressPercentForThisCard,

@@ -247,210 +247,77 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   Future<String?> _showSetPasscodeDialog() async {
-    final passcodeController = TextEditingController();
-    return showDialog<String>(
+    final controller = TextEditingController();
+    String? passcode;
+    await showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          'Set PIN',
-          style: GoogleFonts.inter(
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-            color: Theme.of(context).colorScheme.onSurface,
+        title: const Text('Set App Lock Passcode'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          obscureText: true,
+          maxLength: 6,
+          decoration: const InputDecoration(
+            labelText: 'Enter a 4-6 digit passcode',
           ),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Enter a 4-digit PIN to secure your app',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: passcodeController,
-              keyboardType: TextInputType.number,
-              maxLength: 4,
-              obscureText: true,
-              autofocus: true,
-              style: GoogleFonts.inter(fontSize: 16),
-              decoration: InputDecoration(
-                hintText: '• • • •',
-                hintStyle: GoogleFonts.inter(
-                  color: Theme.of(context).hintColor,
-                ),
-                counterText: '',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Theme.of(context).dividerColor),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                ),
-              ),
-            ),
-          ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Cancel',
-              style: GoogleFonts.inter(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-              ),
-            ),
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
           ),
-          FilledButton(
+          ElevatedButton(
             onPressed: () {
-              if (passcodeController.text.length == 4) {
-                Navigator.pop(context, passcodeController.text);
+              if (controller.text.length >= 4 && controller.text.length <= 6) {
+                passcode = controller.text;
+                Navigator.of(context).pop();
               }
             },
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.primary,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            child: Text(
-              'Set PIN',
-              style: GoogleFonts.inter(fontWeight: FontWeight.w500),
-            ),
+            child: const Text('Set'),
           ),
         ],
       ),
     );
+    return passcode;
   }
 
   Future<bool?> _showVerifyPasscodeDialog(
     SecurityService securityService,
   ) async {
-    final passcodeController = TextEditingController();
-    String? errorText;
-
-    return showDialog<bool>(
+    final controller = TextEditingController();
+    bool? verified = false;
+    await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              title: Text(
-                'Verify PIN',
-                style: GoogleFonts.inter(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Enter your current PIN to disable app lock',
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.6),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: passcodeController,
-                    keyboardType: TextInputType.number,
-                    maxLength: 4,
-                    obscureText: true,
-                    autofocus: true,
-                    style: GoogleFonts.inter(fontSize: 16),
-                    decoration: InputDecoration(
-                      hintText: '• • • •',
-                      hintStyle: GoogleFonts.inter(
-                        color: Theme.of(context).hintColor,
-                      ),
-                      counterText: '',
-                      errorText: errorText,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Theme.of(context).dividerColor,
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                      ),
-                      errorBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: Colors.red),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: Text(
-                    'Cancel',
-                    style: GoogleFonts.inter(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.6),
-                    ),
-                  ),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    if (passcodeController.text.length == 4) {
-                      final isCorrect = securityService.checkPasscode(
-                        passcodeController.text,
-                      );
-                      if (isCorrect) {
-                        Navigator.pop(context, true);
-                      } else {
-                        setState(() {
-                          errorText = 'Incorrect PIN';
-                        });
-                        passcodeController.clear();
-                      }
-                    }
-                  },
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: Text(
-                    'Verify',
-                    style: GoogleFonts.inter(fontWeight: FontWeight.w500),
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (context) => AlertDialog(
+        title: const Text('Verify Passcode'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          obscureText: true,
+          maxLength: 6,
+          decoration: const InputDecoration(labelText: 'Enter your passcode'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (securityService.checkPasscode(controller.text)) {
+                verified = true;
+                Navigator.of(context).pop();
+              }
+            },
+            child: const Text('Verify'),
+          ),
+        ],
+      ),
     );
+    return verified;
   }
 
   String _getSecurityMethodDescription(AuthMethod method) {
@@ -1049,6 +916,27 @@ class _SettingsScreenState extends State<SettingsScreen>
                       },
                       activeColor: theme.colorScheme.primary,
                     ),
+                    onTap: () async {
+                      if (securityService.authMethod == AuthMethod.None) {
+                        final passcode = await _showSetPasscodeDialog();
+                        if (passcode != null) {
+                          final method = _canUseBiometrics
+                              ? AuthMethod.Biometrics
+                              : AuthMethod.Passcode;
+                          await securityService.setAuthMethod(
+                            method,
+                            passcode: passcode,
+                          );
+                        }
+                      } else {
+                        final didVerify = await _showVerifyPasscodeDialog(
+                          securityService,
+                        );
+                        if (didVerify == true) {
+                          await securityService.setAuthMethod(AuthMethod.None);
+                        }
+                      }
+                    },
                     isFirst: true,
                     isLast: true,
                   ),
@@ -1119,7 +1007,7 @@ class _SettingsScreenState extends State<SettingsScreen>
                 _buildSettingsItem(
                   icon: Icons.info_outline,
                   title: 'App Version',
-                  subtitle: '2.3.7',
+                  subtitle: '2.4.8',
                   trailing: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
