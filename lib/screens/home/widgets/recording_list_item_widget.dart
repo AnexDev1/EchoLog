@@ -1,6 +1,9 @@
-import 'package:flutter/material.dart';
-import 'package:echolog/widgets/recording_card.dart';
 import 'package:echolog/models/recording_entry.dart';
+import 'package:echolog/providers/transcription_status_provider.dart';
+import 'package:echolog/widgets/recording_card.dart';
+// Make sure this import path is correct and that the RecordingCard widget exists at this location.
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 class RecordingListItemWidget extends StatelessWidget {
   final RecordingEntry entry;
@@ -15,6 +18,14 @@ class RecordingListItemWidget extends StatelessWidget {
   final ValueNotifier<bool>? isActuallyPlayingNotifier;
   final Duration? totalDuration;
   final Function(double)? onSeekRequest;
+  final double? transcriptionProgress;
+  final String? transcriptionStatusText;
+  final bool isTranscribing;
+  final bool isTranscriptionExpanded;
+  final bool isTranscriptionHidden;
+  final VoidCallback onToggleTranscription;
+  final VoidCallback onToggleTranscriptionVisibility;
+  final VoidCallback? onViewTranscription;
 
   const RecordingListItemWidget({
     Key? key,
@@ -30,10 +41,31 @@ class RecordingListItemWidget extends StatelessWidget {
     this.isActuallyPlayingNotifier,
     this.totalDuration,
     this.onSeekRequest,
+    this.transcriptionProgress,
+    this.transcriptionStatusText,
+    this.isTranscribing = false,
+    required this.isTranscriptionExpanded,
+    required this.isTranscriptionHidden,
+    required this.onToggleTranscription,
+    required this.onToggleTranscriptionVisibility,
+    this.onViewTranscription,
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
+    final transcriptionStatus = Provider.of<TranscriptionStatusProvider>(
+      context,
+    );
+    final bool isTranscribingThis =
+        transcriptionStatus.isTranscribing &&
+        transcriptionStatus.currentEntryId == entry.id;
+    final double? effectiveTranscriptionProgress = isTranscribingThis
+        ? transcriptionStatus.progress
+        : transcriptionProgress;
+    final String? effectiveTranscriptionStatusText = isTranscribingThis
+        ? transcriptionStatus.statusText
+        : transcriptionStatusText;
+
     if (isPlaying &&
         playbackProgressNotifier != null &&
         isActuallyPlayingNotifier != null &&
@@ -53,7 +85,7 @@ class RecordingListItemWidget extends StatelessWidget {
               return RecordingCard(
                 key: ValueKey(entry.id),
                 recording: entry,
-                isPlaying: isActuallyPlaying,
+                isPlaying: isPlaying,
                 isSelected: isSelected,
                 playbackProgressPercent: percent,
                 onPlayToggle: () => onPlayPause(entry),
@@ -62,6 +94,8 @@ class RecordingListItemWidget extends StatelessWidget {
                 onMoveToVault: () => onMoveToVault(entry),
                 onDelete: () => onDelete(entry),
                 onSeekRequest: onSeekRequest,
+
+                onViewTranscription: onViewTranscription,
               );
             },
           );
@@ -80,6 +114,9 @@ class RecordingListItemWidget extends StatelessWidget {
       onTranscribe: () => onTranscribe(entry),
       onMoveToVault: () => onMoveToVault(entry),
       onDelete: () => onDelete(entry),
+      onSeekRequest: onSeekRequest, // Ensure seek is always passed
+
+      onViewTranscription: onViewTranscription,
     );
   }
 }

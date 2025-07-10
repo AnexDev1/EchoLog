@@ -20,9 +20,12 @@ class FilterBottomSheetWidget extends StatefulWidget {
       _FilterBottomSheetWidgetState();
 }
 
-class _FilterBottomSheetWidgetState extends State<FilterBottomSheetWidget> {
+class _FilterBottomSheetWidgetState extends State<FilterBottomSheetWidget>
+    with TickerProviderStateMixin {
   late FilterState _currentFilters;
   late TextEditingController _nameController;
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
 
   @override
   void initState() {
@@ -31,11 +34,20 @@ class _FilterBottomSheetWidgetState extends State<FilterBottomSheetWidget> {
     _nameController = TextEditingController(
       text: _currentFilters.searchNameQuery,
     );
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
+    );
+    _animationController.forward();
   }
 
   @override
   void dispose() {
     _nameController.dispose();
+    _animationController.dispose();
     super.dispose();
   }
 
@@ -49,27 +61,28 @@ class _FilterBottomSheetWidgetState extends State<FilterBottomSheetWidget> {
             end: DateTime.now(),
           ),
       firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(
-        const Duration(days: 365),
-      ), // Allow picking future dates if relevant, or just DateTime.now()
+      lastDate: DateTime.now().add(const Duration(days: 365)),
       builder: (context, child) {
         final theme = Theme.of(context);
-        final isDark = theme.brightness == Brightness.dark;
         return Theme(
           data: theme.copyWith(
             colorScheme: theme.colorScheme.copyWith(
               primary: theme.colorScheme.primary,
-              onPrimary: isDark ? Colors.white : Colors.black,
-              surface: isDark ? theme.colorScheme.surface : Colors.white,
-              onSurface: isDark ? Colors.white : Colors.black,
-              background: isDark ? theme.colorScheme.background : Colors.white,
+              surface: theme.colorScheme.surface,
             ),
-            dialogBackgroundColor: isDark
-                ? theme.colorScheme.surface
-                : Colors.white,
-            textTheme: theme.textTheme.apply(
-              bodyColor: isDark ? Colors.white : Colors.black,
-              displayColor: isDark ? Colors.white : Colors.black,
+            datePickerTheme: DatePickerThemeData(
+              backgroundColor: theme.colorScheme.surface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              headerBackgroundColor: theme.colorScheme.primary,
+              headerForegroundColor: theme.colorScheme.onPrimary,
+              dayStyle: GoogleFonts.poppins(),
+              weekdayStyle: GoogleFonts.poppins(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+              yearStyle: GoogleFonts.poppins(),
             ),
           ),
           child: child!,
@@ -109,265 +122,603 @@ class _FilterBottomSheetWidgetState extends State<FilterBottomSheetWidget> {
     return '${formatter.format(range.start)} - ${formatter.format(range.end)}';
   }
 
+  int _getActiveFiltersCount() {
+    int count = 0;
+    if (_currentFilters.moodName != null) count++;
+    if (_currentFilters.durationRangeSeconds != null) count++;
+    if (_currentFilters.searchNameQuery?.isNotEmpty == true) count++;
+    if (_currentFilters.dateRecordedRange != null) count++;
+    return count;
+  }
+
+  Widget _buildSectionHeader(String title, {Widget? trailing}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.poppins(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+          if (trailing != null) trailing,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterSection({
+    required String title,
+    required Widget child,
+    Widget? trailing,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 24.0),
+      padding: const EdgeInsets.all(20.0),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Theme.of(context).shadowColor.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildSectionHeader(title, trailing: trailing),
+          child,
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom, // Adjust for keyboard
-        left: 16,
-        right: 16,
-        top: 20,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              'Filter Recordings',
-              style: GoogleFonts.poppins(
-                fontSize: 20,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 20),
+    final activeFiltersCount = _getActiveFiltersCount();
 
-            // Mood Filter
-            Text(
-              'Mood',
-              style: GoogleFonts.poppins(
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            Wrap(
-              spacing: 8.0,
-              children: [
-                ChoiceChip(
-                  label: Text(
-                    'All',
-                    style: GoogleFonts.poppins(
-                      color: _currentFilters.moodName == null
-                          ? theme.colorScheme.onPrimary
-                          : null,
-                    ),
-                  ),
-                  selected: _currentFilters.moodName == null,
-                  selectedColor: theme.colorScheme.primary,
-                  onSelected: (selected) {
-                    setState(() {
-                      _currentFilters = _currentFilters.copyWith(
-                        clearMoodName: true,
-                      );
-                    });
-                  },
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: Container(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.background,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+            left: 20,
+            right: 20,
+            top: 8,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.onSurface.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(2),
                 ),
-                ...widget.categories.map((category) {
-                  final String mood = category['name'] as String;
-                  return ChoiceChip(
-                    label: Text(
-                      mood,
-                      style: GoogleFonts.poppins(
-                        color: _currentFilters.moodName == mood
-                            ? theme.colorScheme.onPrimary
-                            : null,
+              ),
+
+              // Header
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Filter Recordings',
+                        style: GoogleFonts.poppins(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w700,
+                          color: theme.colorScheme.onSurface,
+                        ),
+                      ),
+                      if (activeFiltersCount > 0)
+                        Container(
+                          margin: const EdgeInsets.only(top: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primary.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '$activeFiltersCount active',
+                            style: GoogleFonts.poppins(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: Icon(
+                      Icons.close_rounded,
+                      color: theme.colorScheme.onSurface.withOpacity(0.7),
+                    ),
+                    style: IconButton.styleFrom(
+                      backgroundColor: theme.colorScheme.surfaceVariant,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    selected: _currentFilters.moodName == mood,
-                    selectedColor: theme.colorScheme.primary,
-                    avatar: _currentFilters.moodName == mood
-                        ? Icon(
-                            Icons.check,
-                            color: theme.colorScheme.onPrimary,
-                            size: 16,
-                          )
-                        : null,
-                    onSelected: (selected) {
-                      setState(() {
-                        _currentFilters = _currentFilters.copyWith(
-                          moodName: mood,
-                        );
-                      });
-                    },
-                  );
-                }).toList(),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            // Duration Filter
-            Text(
-              'Duration: ${_formatDurationRange(_currentFilters.durationRangeSeconds)}',
-              style: GoogleFonts.poppins(
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
+                  ),
+                ],
               ),
-            ),
-            RangeSlider(
-              values:
-                  _currentFilters.durationRangeSeconds ??
-                  const RangeValues(0, FilterState.maxDurationSliderValue),
-              min: 0,
-              max: FilterState.maxDurationSliderValue,
-              divisions: (FilterState.maxDurationSliderValue / 60)
-                  .round(), // divisions per minute
-              labels: RangeLabels(
-                _formatSliderDuration(
-                  Duration(
-                    seconds:
-                        (_currentFilters.durationRangeSeconds ??
-                                const RangeValues(0, 0))
-                            .start
-                            .round(),
+
+              const SizedBox(height: 24),
+
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Mood Filter
+                      _buildFilterSection(
+                        title: 'Mood',
+                        trailing: _currentFilters.moodName != null
+                            ? TextButton.icon(
+                                onPressed: () => setState(() {
+                                  _currentFilters = _currentFilters.copyWith(
+                                    clearMoodName: true,
+                                  );
+                                }),
+                                icon: Icon(
+                                  Icons.clear_rounded,
+                                  size: 16,
+                                  color: theme.colorScheme.error,
+                                ),
+                                label: Text(
+                                  'Clear',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 12,
+                                    color: theme.colorScheme.error,
+                                  ),
+                                ),
+                              )
+                            : null,
+                        child: Wrap(
+                          spacing: 8.0,
+                          runSpacing: 8.0,
+                          children: [
+                            _buildMoodChip(
+                              'All',
+                              isSelected: _currentFilters.moodName == null,
+                              onTap: () => setState(() {
+                                _currentFilters = _currentFilters.copyWith(
+                                  clearMoodName: true,
+                                );
+                              }),
+                            ),
+                            ...widget.categories.map((category) {
+                              final String mood = category['name'] as String;
+                              return _buildMoodChip(
+                                mood,
+                                isSelected: _currentFilters.moodName == mood,
+                                onTap: () => setState(() {
+                                  _currentFilters = _currentFilters.copyWith(
+                                    moodName: mood,
+                                  );
+                                }),
+                              );
+                            }).toList(),
+                          ],
+                        ),
+                      ),
+
+                      // Duration Filter
+                      _buildFilterSection(
+                        title: 'Duration',
+                        trailing: _currentFilters.durationRangeSeconds != null
+                            ? TextButton.icon(
+                                onPressed: () => setState(() {
+                                  _currentFilters = _currentFilters.copyWith(
+                                    clearDurationRangeSeconds: true,
+                                  );
+                                }),
+                                icon: Icon(
+                                  Icons.clear_rounded,
+                                  size: 16,
+                                  color: theme.colorScheme.error,
+                                ),
+                                label: Text(
+                                  'Clear',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 12,
+                                    color: theme.colorScheme.error,
+                                  ),
+                                ),
+                              )
+                            : null,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primaryContainer
+                                    .withOpacity(0.3),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                _formatDurationRange(
+                                  _currentFilters.durationRangeSeconds,
+                                ),
+                                style: GoogleFonts.poppins(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: theme.colorScheme.onSurface,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 4,
+                                thumbShape: const RoundSliderThumbShape(
+                                  enabledThumbRadius: 8,
+                                ),
+                                overlayShape: const RoundSliderOverlayShape(
+                                  overlayRadius: 16,
+                                ),
+                              ),
+                              child: RangeSlider(
+                                values:
+                                    _currentFilters.durationRangeSeconds ??
+                                    const RangeValues(
+                                      0,
+                                      FilterState.maxDurationSliderValue,
+                                    ),
+                                min: 0,
+                                max: FilterState.maxDurationSliderValue,
+                                divisions:
+                                    (FilterState.maxDurationSliderValue / 60)
+                                        .round(),
+                                labels: RangeLabels(
+                                  _formatSliderDuration(
+                                    Duration(
+                                      seconds:
+                                          (_currentFilters
+                                                      .durationRangeSeconds ??
+                                                  const RangeValues(0, 0))
+                                              .start
+                                              .round(),
+                                    ),
+                                  ),
+                                  _formatSliderDuration(
+                                    Duration(
+                                      seconds:
+                                          (_currentFilters
+                                                      .durationRangeSeconds ??
+                                                  const RangeValues(
+                                                    0,
+                                                    FilterState
+                                                        .maxDurationSliderValue,
+                                                  ))
+                                              .end
+                                              .round(),
+                                    ),
+                                  ),
+                                ),
+                                onChanged: (RangeValues values) {
+                                  setState(() {
+                                    _currentFilters = _currentFilters.copyWith(
+                                      durationRangeSeconds: values,
+                                    );
+                                  });
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // Name Filter
+                      _buildFilterSection(
+                        title: 'Name Contains',
+                        trailing: _nameController.text.isNotEmpty
+                            ? TextButton.icon(
+                                onPressed: () {
+                                  _nameController.clear();
+                                  setState(() {
+                                    _currentFilters = _currentFilters.copyWith(
+                                      searchNameQuery: '',
+                                    );
+                                  });
+                                },
+                                icon: Icon(
+                                  Icons.clear_rounded,
+                                  size: 16,
+                                  color: theme.colorScheme.error,
+                                ),
+                                label: Text(
+                                  'Clear',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 12,
+                                    color: theme.colorScheme.error,
+                                  ),
+                                ),
+                              )
+                            : null,
+                        child: TextField(
+                          controller: _nameController,
+                          decoration: InputDecoration(
+                            hintText: 'Search by name...',
+                            hintStyle: GoogleFonts.poppins(
+                              color: theme.colorScheme.onSurface.withOpacity(
+                                0.5,
+                              ),
+                            ),
+                            prefixIcon: Icon(
+                              Icons.search_rounded,
+                              color: theme.colorScheme.onSurface.withOpacity(
+                                0.5,
+                              ),
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: theme.colorScheme.outline.withOpacity(
+                                  0.3,
+                                ),
+                              ),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: theme.colorScheme.outline.withOpacity(
+                                  0.3,
+                                ),
+                              ),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: theme.colorScheme.primary,
+                                width: 2,
+                              ),
+                            ),
+                            filled: true,
+                            fillColor: theme.colorScheme.surface,
+                          ),
+                          onChanged: (value) {
+                            setState(() {
+                              _currentFilters = _currentFilters.copyWith(
+                                searchNameQuery: value,
+                              );
+                            });
+                          },
+                          style: GoogleFonts.poppins(),
+                        ),
+                      ),
+
+                      // Date Filter
+                      _buildFilterSection(
+                        title: 'Date Recorded',
+                        trailing: _currentFilters.dateRecordedRange != null
+                            ? TextButton.icon(
+                                onPressed: () => setState(() {
+                                  _currentFilters = _currentFilters.copyWith(
+                                    clearDateRecordedRange: true,
+                                  );
+                                }),
+                                icon: Icon(
+                                  Icons.clear_rounded,
+                                  size: 16,
+                                  color: theme.colorScheme.error,
+                                ),
+                                label: Text(
+                                  'Clear',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 12,
+                                    color: theme.colorScheme.error,
+                                  ),
+                                ),
+                              )
+                            : null,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primaryContainer
+                                    .withOpacity(0.3),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                _formatDateRange(
+                                  _currentFilters.dateRecordedRange,
+                                ),
+                                style: GoogleFonts.poppins(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: theme.colorScheme.onSurface,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                onPressed: () => _selectDateRange(context),
+                                icon: Icon(
+                                  Icons.calendar_month_outlined,
+                                  size: 20,
+                                  color: theme.colorScheme.onSurface,
+                                ),
+                                label: Text(
+                                  'Select Date Range',
+                                  style: GoogleFonts.poppins(
+                                    fontWeight: FontWeight.w500,
+                                    color: theme.colorScheme.onSurface,
+                                  ),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor:
+                                      theme.colorScheme.surfaceVariant,
+                                  elevation: 0,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 12,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                _formatSliderDuration(
-                  Duration(
-                    seconds:
-                        (_currentFilters.durationRangeSeconds ??
-                                const RangeValues(
-                                  0,
-                                  FilterState.maxDurationSliderValue,
-                                ))
-                            .end
-                            .round(),
-                  ),
-                ),
               ),
-              onChanged: (RangeValues values) {
-                setState(() {
-                  _currentFilters = _currentFilters.copyWith(
-                    durationRangeSeconds: values,
-                  );
-                });
-              },
-            ),
-            TextButton(
-              onPressed: () => setState(
-                () => _currentFilters = _currentFilters.copyWith(
-                  clearDurationRangeSeconds: true,
-                ),
-              ),
-              child: Text(
-                'Clear Duration Filter',
-                style: GoogleFonts.poppins(color: theme.colorScheme.secondary),
-              ),
-            ),
-            const SizedBox(height: 16),
 
-            // Name Filter
-            Text(
-              'Name Contains',
-              style: GoogleFonts.poppins(
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            TextField(
-              controller: _nameController,
-              decoration: InputDecoration(
-                hintText: 'Search by name...',
-                hintStyle: GoogleFonts.poppins(),
-                suffixIcon: _nameController.text.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
+              // Action Buttons
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
                         onPressed: () {
-                          _nameController.clear();
-                          setState(() {
-                            _currentFilters = _currentFilters.copyWith(
-                              searchNameQuery: '',
-                            );
-                          });
+                          widget.onApplyFilters(_currentFilters.clearAll());
+                          Navigator.pop(context);
                         },
-                      )
-                    : null,
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          side: BorderSide(
+                            color: theme.colorScheme.outline.withOpacity(0.5),
+                          ),
+                        ),
+                        child: Text(
+                          'Clear All',
+                          style: GoogleFonts.poppins(
+                            fontWeight: FontWeight.w600,
+                            color: theme.colorScheme.onSurface,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          _currentFilters = _currentFilters.copyWith(
+                            searchNameQuery: _nameController.text,
+                          );
+                          widget.onApplyFilters(_currentFilters);
+                          Navigator.pop(context);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: theme.colorScheme.primary,
+                          foregroundColor: theme.colorScheme.onPrimary,
+                          elevation: 2,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: Text(
+                          'Apply Filters',
+                          style: GoogleFonts.poppins(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              onChanged: (value) {
-                // Debounce could be added here for performance if needed
-                setState(() {
-                  _currentFilters = _currentFilters.copyWith(
-                    searchNameQuery: value,
-                  );
-                });
-              },
-              style: GoogleFonts.poppins(),
-            ),
-            const SizedBox(height: 16),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
-            // Date Filter
+  Widget _buildMoodChip(
+    String label, {
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? theme.colorScheme.primary
+              : theme.colorScheme.surfaceVariant.withOpacity(0.5),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected
+                ? theme.colorScheme.primary
+                : theme.colorScheme.outline.withOpacity(0.3),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isSelected)
+              Container(
+                margin: const EdgeInsets.only(right: 6),
+                child: Icon(
+                  Icons.check_rounded,
+                  size: 16,
+                  color: theme.colorScheme.onPrimary,
+                ),
+              ),
             Text(
-              'Date Recorded: ${_formatDateRange(_currentFilters.dateRecordedRange)}',
+              label,
               style: GoogleFonts.poppins(
-                fontSize: 16,
+                fontSize: 14,
                 fontWeight: FontWeight.w500,
+                color: isSelected
+                    ? theme.colorScheme.onPrimary
+                    : theme.colorScheme.onSurface,
               ),
             ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.calendar_today),
-                  label: Text('Select Range', style: GoogleFonts.poppins()),
-                  onPressed: () => _selectDateRange(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: theme.colorScheme.surfaceVariant,
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => setState(
-                    () => _currentFilters = _currentFilters.copyWith(
-                      clearDateRecordedRange: true,
-                    ),
-                  ),
-                  child: Text(
-                    'Clear Date Filter',
-                    style: GoogleFonts.poppins(
-                      color: theme.colorScheme.secondary,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-
-            // Action Buttons
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () {
-                    widget.onApplyFilters(_currentFilters.clearAll());
-                    Navigator.pop(context);
-                  },
-                  child: Text(
-                    'Clear All Filters',
-                    style: GoogleFonts.poppins(color: theme.colorScheme.error),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: () {
-                    // Update search query from controller before applying
-                    _currentFilters = _currentFilters.copyWith(
-                      searchNameQuery: _nameController.text,
-                    );
-                    widget.onApplyFilters(_currentFilters);
-                    Navigator.pop(context);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: theme.colorScheme.primary,
-                  ),
-                  child: Text(
-                    'Apply Filters',
-                    style: GoogleFonts.poppins(
-                      color: theme.colorScheme.onPrimary,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20), // Padding for bottom
           ],
         ),
       ),

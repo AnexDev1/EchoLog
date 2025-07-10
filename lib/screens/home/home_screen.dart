@@ -13,33 +13,35 @@ import 'package:echolog/providers/transcription_status_provider.dart';
 import 'package:echolog/screens/hidden/hidden_recordings_screen.dart';
 import 'package:echolog/screens/home/widgets/category_selector_widget.dart';
 import 'package:echolog/screens/home/widgets/recording_controls_widget.dart';
-import 'package:echolog/screens/home/widgets/recording_list_item_widget.dart';
 import 'package:echolog/screens/home/widgets/streak_widget.dart';
 import 'package:echolog/screens/recordings/recordings_list_page.dart';
 import 'package:echolog/screens/settings/settings_screen.dart';
 import 'package:echolog/services/dynamic_greeting_service.dart';
 import 'package:echolog/services/password_service.dart';
 import 'package:echolog/services/recording_service.dart';
+import 'package:echolog/services/security_service.dart';
 import 'package:echolog/utils/custom_snackbar.dart';
 import 'package:echolog/widgets/dialogs/create_password_dialog.dart';
 import 'package:echolog/widgets/dialogs/enter_password_dialog.dart';
 import 'package:echolog/widgets/dialogs/filter_bottom_sheet_widget.dart';
 import 'package:echolog/widgets/dialogs/save_recording_dialog.dart';
-import 'package:echolog/services/security_service.dart';
 import 'package:echolog/widgets/transcription_progress_bar.dart';
 // import 'package:echolog/services/recording_service.dart'; // Not used directly in this file
 
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+import '../calendar_screen.dart';
 
 const String PREF_HIDDEN_ACCESS_METHOD = 'selectedHiddenAccessTriggerMethod';
 final String _lemonFoxApiKey = dotenv.env['LEMONFOX_API_KEY'] ?? "";
@@ -269,9 +271,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _playRecordingFromProviderOrWidget(RecordingEntry entry) async {
-    await _togglePlayRecordingItem(entry, [
-      entry,
-    ]); // Reuse common logic, pass entry as a single-item list
+    await _startPlaybackForEntry(entry);
     // Ensure playback provider request is cleared if it was the source
     Provider.of<PlaybackProvider>(
       context,
@@ -327,125 +327,58 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Future<void> _togglePlayRecordingItem(
     RecordingEntry entry,
-    List<RecordingEntry> currentList, {
+    List<RecordingEntry> allEntries, {
     String playbackContext = 'home',
   }) async {
-    if (!_isPlayerInitialized || _player == null) {
-      showCustomSnackBar(
-        context: context,
-        message: 'Player not ready.',
-        leadingIcon: Icons.play_disabled_rounded,
-      );
-      return;
-    }
+    final isCurrent = _currentlyPlayingFileIdNotifier.value == entry.id;
+    final isPlaying = isCurrent && (_player?.isPlaying ?? false);
+    final isPaused = isCurrent && (_player?.isPaused ?? false);
 
-    final String entryId = entry.id;
-    final bool isTargetEntryCurrentlyPlaying =
-        _currentlyPlayingFileIdNotifier.value == entryId && _player!.isPlaying;
-    final bool isTargetEntryCurrentlyPaused =
-        _currentlyPlayingFileIdNotifier.value == entryId && _player!.isPaused;
-
-    final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
-
-    if (isTargetEntryCurrentlyPlaying) {
-      // --- CASE 1: Target entry is PLAYING -> PAUSE it ---
-      try {
-        await _player!.pausePlayer();
-        _isActuallyPlayingNotifier.value = false;
-        final entryInBox = recordingsBox.get(entryId);
-        if (entryInBox != null) {
-          entryInBox.isPlaying = false;
-          await recordingsBox.put(entryId, entryInBox);
-        }
-        if (_currentlyPlayingEntry?.id == entryId) {
-          _currentlyPlayingEntry?.isPlaying = false;
-        }
-        if (mounted) setState(() {});
-      } catch (e) {
-        print("[HomeScreen] Error pausing player: $e");
-        await _stopPlaybackAndResetState(); // Fallback to stop on error
-      }
-    } else if (isTargetEntryCurrentlyPaused) {
-      // --- CASE 2: Target entry is PAUSED -> RESUME it ---
-      try {
-        await _player!.resumePlayer();
-        _isActuallyPlayingNotifier.value = true;
-        final entryInBox = recordingsBox.get(entryId);
-        if (entryInBox != null) {
-          entryInBox.isPlaying = true;
-          await recordingsBox.put(entryId, entryInBox);
-        }
-        if (_currentlyPlayingEntry?.id == entryId) {
-          _currentlyPlayingEntry?.isPlaying = true;
-        }
-        if (mounted) setState(() {});
-      } catch (e) {
-        print("[HomeScreen] Error resuming player: $e");
-        await _stopPlaybackAndResetState(); // Fallback to stop on error
-      }
+    if (isPlaying) {
+      // Pause playback
+      await _player?.pausePlayer();
+      if (mounted)
+        setState(() {
+          _isActuallyPlayingNotifier.value = false;
+        });
+    } else if (isPaused) {
+      // Resume playback
+      await _player?.resumePlayer();
+      if (mounted)
+        setState(() {
+          _isActuallyPlayingNotifier.value = true;
+        });
     } else {
-      // --- CASE 3: Play NEW entry (or different entry was active) ---
-      if (_currentlyPlayingFileIdNotifier.value != null ||
-          _player!.isPlaying ||
-          _player!.isPaused) {
-        await _stopPlaybackAndResetState();
-      }
-      final file = File(entry.filePath);
-      if (!await file.exists()) {
-        print(
-          "[HomeScreen] Error: File does not exist at path: ${entry.filePath}",
-        );
-        showCustomSnackBar(
-          context: context,
-          message: 'Error: Recording file not found.',
-          leadingIcon: Icons.error_outline_rounded,
-          iconColor: Theme.of(context).colorScheme.error,
-        );
-        return;
-      }
-      try {
-        await _player!.startPlayer(
-          fromURI: entry.filePath,
-          codec: Codec.aacADTS, // Ensure this codec is correct for your files
-          whenFinished: () {
-            if (_currentlyPlayingFileIdNotifier.value == entryId) {
-              _stopPlaybackAndResetState();
-            }
-          },
-        );
-        _isActuallyPlayingNotifier.value = true;
-        final entryInBox = recordingsBox.get(entryId);
-        if (entryInBox != null) {
-          entryInBox.isPlaying = true;
-          await recordingsBox.put(entryId, entryInBox);
-          _currentlyPlayingEntry = entryInBox;
-        } else {
-          entry.isPlaying = true;
-          _currentlyPlayingEntry = entry;
-        }
-        if (mounted) {
-          setState(() {
-            _currentlyPlayingFileIdNotifier.value = entryId;
-            _currentTotalDuration =
-                _currentlyPlayingEntry?.duration ?? Duration.zero;
-            _currentPlaybackProgress.value =
-                Duration.zero; // Reset progress for new track
-          });
-        }
-      } catch (e) {
-        print("[HomeScreen] Error playing recording item: $e");
-        showCustomSnackBar(
-          context: context,
-          message: 'Error playing recording.',
-          leadingIcon: Icons.error_outline_rounded,
-          iconColor: Theme.of(context).colorScheme.error,
-        );
-        await _stopPlaybackAndResetState();
-      }
+      // Start new playback
+      await _startPlaybackForEntry(entry);
     }
   }
 
-  // ...rest of your HomeScreen code...
+  Future<void> _startPlaybackForEntry(RecordingEntry entry) async {
+    await _stopPlaybackAndResetState();
+    await _player?.startPlayer(
+      fromURI: entry.filePath,
+      codec: Codec.aacADTS,
+      whenFinished: () {
+        if (mounted) {
+          setState(() {
+            _currentlyPlayingFileIdNotifier.value = null;
+            _currentlyPlayingEntry = null;
+            _isActuallyPlayingNotifier.value = false;
+            _currentPlaybackProgress.value = Duration.zero;
+          });
+        }
+      },
+    );
+    if (mounted)
+      setState(() {
+        _currentlyPlayingFileIdNotifier.value = entry.id;
+        _currentlyPlayingEntry = entry;
+        _isActuallyPlayingNotifier.value = true;
+      });
+  }
+
+  // ...existing code...
   Future<void> _shareRecordingFile(RecordingEntry entry) async {
     await _stopPlaybackAndResetState(); // Stop playback before sharing
     if (entry.filePath.isEmpty) {
@@ -1051,7 +984,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       moodColor: categoryData['color'] as Color,
       moodIconColor: categoryData['iconColor'] as Color,
       moodEmoji: categoryData['emoji'] as String? ?? '',
-      waveformPoints: waveformPoints, // Save generated waveform
+      waveformPoints: waveformPoints,
+      // Save generated waveform
       summaryPreview: summaryPreview, // Save generated summary
     );
     final box = Hive.box<RecordingEntry>(recordingsBoxName);
@@ -1095,8 +1029,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           filePath: filePath,
           duration: duration,
           categoryData: categoryData,
-          player: _player, // Pass player for preview functionality in dialog
-          isPlayerInitialized: _isPlayerInitialized, // Pass player status
+          player: _player,
+          // Pass player for preview functionality in dialog
+          isPlayerInitialized: _isPlayerInitialized,
+          // Pass player status
           onSave:
               (
                 String displayName,
@@ -1294,14 +1230,31 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final isPlaying =
         _currentlyPlayingFileIdNotifier.value == entry.id &&
         (_player?.isPlaying ?? false);
-    return IconButton(
-      icon: Icon(
-        isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
-        color: Theme.of(context).colorScheme.primary,
-        size: 32,
-      ),
-      onPressed: () => _togglePlayRecordingItem(entry, [entry]),
-      tooltip: isPlaying ? 'Pause' : 'Play',
+    // Use the mood color for the play/pause icon if available, else fallback to primary
+    final Color moodColor = entry.moodColor is Color
+        ? entry.moodColor
+        : Theme.of(context).colorScheme.primary;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          icon: Icon(
+            isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
+            color: moodColor,
+            size: 32,
+          ),
+          onPressed: () => _togglePlayRecordingItem(entry, [entry]),
+          tooltip: isPlaying ? 'Pause' : 'Play',
+        ),
+        if (isPlaying)
+          Padding(
+            padding: const EdgeInsets.only(left: 4.0),
+            child: Text(
+              'Playing',
+              style: TextStyle(color: moodColor, fontWeight: FontWeight.bold),
+            ),
+          ),
+      ],
     );
   }
 
@@ -1333,6 +1286,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final now = DateTime.now();
+
+    // Format date components
+    final dayOfWeek = DateFormat('EEEE').format(now);
+    final monthDay = DateFormat('MMMM d').format(now);
+    final year = DateFormat('y').format(now);
 
     Widget mainScaffoldContent = Scaffold(
       appBar: PreferredSize(
@@ -1340,12 +1299,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         child: _buildAppBar(context),
       ),
       body: Padding(
-        padding: const EdgeInsets.fromLTRB(
-          16.0,
-          16.0,
-          16.0,
-          0,
-        ), // Use all(16.0) or specific as needed
+        padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 0),
         child: ValueListenableBuilder<Box<CustomCategory>>(
           valueListenable: Hive.box<CustomCategory>(
             customCategoriesBoxName,
@@ -1375,9 +1329,117 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
+                // Enhanced Date Display Section
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 12.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      // Main date display
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            dayOfWeek,
+                            style: GoogleFonts.poppins(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: theme.colorScheme.onBackground.withOpacity(
+                                0.7,
+                              ),
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            monthDay,
+                            style: GoogleFonts.poppins(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w600,
+                              color: theme.colorScheme.onBackground,
+                              letterSpacing: -0.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                      // Elegant calendar icon with subtle background
+                      GestureDetector(
+                        onTap: () {
+                          // Get all recording dates for streak calculation
+                          final recordingDates =
+                              Hive.box<RecordingEntry>(recordingsBoxName).values
+                                  .map(
+                                    (entry) => DateTime(
+                                      entry.dateRecorded.year,
+                                      entry.dateRecorded.month,
+                                      entry.dateRecorded.day,
+                                    ),
+                                  )
+                                  .toList();
+
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  CalendarPage(recordingDates: recordingDates),
+                            ),
+                          );
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primary.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: theme.colorScheme.primary.withOpacity(0.2),
+                              width: 1,
+                            ),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.calendar_today_rounded,
+                                color: theme.colorScheme.primary,
+                                size: 20,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                year,
+                                style: GoogleFonts.poppins(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w500,
+                                  color: theme.colorScheme.primary,
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Subtle divider
+                Container(
+                  height: 1,
+                  margin: const EdgeInsets.symmetric(vertical: 8),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.transparent,
+                        theme.colorScheme.onBackground.withOpacity(0.1),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+
+                // Greeting section with better spacing
                 Center(
                   child: SizedBox(
-                    height: 92,
+                    height: 110, // Increased height for dynamic title
                     child: FadeTransition(
                       opacity: _greetingFadeAnim,
                       child: Center(
@@ -1399,15 +1461,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ),
                   ),
                 ),
-
-                const SizedBox(height: 25),
+                const SizedBox(height: 16), // Reduced space after dynamic title
                 CategorySelectorWidget(
                   predefinedCategories: _predefinedCategories,
                   selectedCategoryData: _selectedCategoryData,
                   isRecording: _isRecording,
                   onCategorySelected: _onCategorySelected,
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 24), // Reduced space after category tags
+                // Main recording controls - centered and prominent
                 Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -1426,6 +1488,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               'iconColor': Colors.grey.shade200,
                             },
                         isRecorderInitialized: _isRecorderInitialized,
+                        // Use a theme-adaptive color for the record icon
+                        recordIconColor: Theme.of(
+                          context,
+                        ).colorScheme.secondary,
                         onStartStopRecording:
                             (_selectedCategoryData == null ||
                                 (_player?.isPlaying ?? false))
@@ -1435,11 +1501,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       ),
                       if (_selectedCategoryData == null)
                         Padding(
-                          padding: const EdgeInsets.only(top: 10.0),
+                          padding: const EdgeInsets.only(
+                            top: 10.0,
+                          ), // Reduced space
                           child: Text(
-                            'Choose a topic ',
+                            'Choose a topic to start recording',
                             style: GoogleFonts.poppins(
-                              color: Colors.white,
+                              color: theme.colorScheme.onBackground.withOpacity(
+                                0.6,
+                              ),
                               fontSize: 12,
                               fontWeight: FontWeight.w500,
                             ),
@@ -1448,72 +1518,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ],
                   ),
                 ),
-                const SizedBox(height: 25), // Adjusted spacing from 40
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 0.0,
-                  ), // Adjusted from 8.0
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Recent Recordings',
-                        style: GoogleFonts.poppins(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w600,
-                          color: theme.colorScheme.onBackground,
-                        ),
-                      ),
-                      IconButton(
-                        icon: Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          color: theme.colorScheme.primary,
-                        ),
-                        tooltip: 'View All Recordings',
-                        onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => RecordingsListPage(
-                                allRecordings:
-                                    Hive.box<RecordingEntry>(
-                                      recordingsBoxName,
-                                    ).values.toList()..sort(
-                                      (a, b) => b.dateRecorded.compareTo(
-                                        a.dateRecorded,
-                                      ),
-                                    ),
-                                onRecordingToggled: (entry) =>
-                                    _togglePlayRecordingItem(
-                                      entry,
-                                      Hive.box<RecordingEntry>(
-                                        recordingsBoxName,
-                                      ).values.toList(),
-                                      playbackContext: 'list',
-                                    ),
-                                playbackProgress: _currentPlaybackProgress,
-                                totalDuration: _currentTotalDuration,
-                                currentlyPlayingFileIdNotifier:
-                                    _currentlyPlayingFileIdNotifier,
-                                isActuallyPlayingNotifier:
-                                    _isActuallyPlayingNotifier,
-                                onSeekRequest: _handleSeek,
-                                onDelete: _handleDismissRecording,
-                                onShareFile: _shareRecordingFile,
-                                onShareTranscription: _shareTranscriptionText,
-                                onRename: _renameRecording,
-                                onEditCategory: _editRecordingCategory,
-                                onToggleHidden: _moveToVault,
-                                onGenerateTranscription:
-                                    _transcribeWithLemonFox,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 5), // Adjusted from 15
+                const SizedBox(
+                  height: 24,
+                ), // Reduced space before Play Latest button
+                // Recording stats and quick actions section
+                // Recording stats and navigation section
                 Expanded(
                   child: ValueListenableBuilder<Box<RecordingEntry>>(
                     valueListenable: Hive.box<RecordingEntry>(
@@ -1524,47 +1533,295 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         ..sort(
                           (a, b) => b.dateRecorded.compareTo(a.dateRecorded),
                         );
-                      final recentRecordings = allRecordings.take(2).toList();
-                      return ListView.builder(
-                        padding: const EdgeInsets.only(
-                          bottom: 80.0,
-                          top: 8.0,
-                          left: 8.0,
-                          right: 8.0,
-                        ),
-                        itemCount: recentRecordings.length,
-                        itemBuilder: (context, index) {
-                          final entry = recentRecordings[index];
-                          final isThisCardPlaying =
-                              _currentlyPlayingFileIdNotifier.value == entry.id;
-                          return RecordingListItemWidget(
-                            entry: entry,
-                            isPlaying: isThisCardPlaying,
-                            isSelected: false,
-                            onPlayPause: (e) =>
-                                _togglePlayRecordingItem(e, recentRecordings),
-                            onMoveToVault: _moveToVault,
-                            onShare: _showShareOptionsDialog,
-                            onTranscribe: _transcribeWithLemonFox,
-                            onDelete: _handleDismissRecording,
-                            playbackProgressNotifier: isThisCardPlaying
-                                ? _currentPlaybackProgress
-                                : null,
-                            isActuallyPlayingNotifier: isThisCardPlaying
-                                ? _isActuallyPlayingNotifier
-                                : null,
-                            totalDuration: isThisCardPlaying
-                                ? _currentTotalDuration
-                                : null,
-                            onSeekRequest: isThisCardPlaying
-                                ? _handleSeek
-                                : null,
-                          );
-                        },
+
+                      final todayRecordings = allRecordings.where((recording) {
+                        final recordingDate = recording.dateRecorded;
+                        final today = DateTime.now();
+                        return recordingDate.year == today.year &&
+                            recordingDate.month == today.month &&
+                            recordingDate.day == today.day;
+                      }).length;
+
+                      final totalRecordings = allRecordings.length;
+                      final totalDuration = allRecordings.fold<Duration>(
+                        Duration.zero,
+                        (sum, recording) => sum + recording.duration,
+                      );
+
+                      return Column(
+                        children: [
+                          // Quick play button (only show if there are recordings)
+                          if (allRecordings.isNotEmpty) ...[
+                            ValueListenableBuilder<String?>(
+                              valueListenable: _currentlyPlayingFileIdNotifier,
+                              builder: (context, currentlyPlayingId, _) {
+                                final mostRecent = allRecordings.first;
+                                final isPlaying =
+                                    currentlyPlayingId == mostRecent.id &&
+                                    (_player?.isPlaying ?? false);
+                                return GestureDetector(
+                                  onTap: () async {
+                                    // Defensive: check file exists
+                                    if (mostRecent.filePath.isEmpty) {
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              'Recording file path is missing.',
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                      return;
+                                    }
+                                    final file = File(mostRecent.filePath);
+                                    if (!await file.exists()) {
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              'Recording file not found.',
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                      return;
+                                    }
+                                    // Use the correct toggle logic for play/pause
+                                    await _togglePlayRecordingItem(mostRecent, [
+                                      mostRecent,
+                                    ]);
+                                  },
+                                  child: Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 15,
+                                      vertical: 10,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.transparent,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: theme.colorScheme.primary
+                                            .withOpacity(0.3),
+                                        width: 1,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: theme.colorScheme.primary
+                                              .withOpacity(0.05),
+                                          blurRadius: 4,
+                                          offset: const Offset(0, 1),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Flexible(
+                                          child: Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                isPlaying
+                                                    ? Icons.pause_circle_filled
+                                                    : Icons.play_circle_filled,
+                                                color:
+                                                    theme.colorScheme.primary,
+                                                size: 28,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Flexible(
+                                                child: Text(
+                                                  isPlaying
+                                                      ? 'Pause Latest'
+                                                      : 'Play Latest',
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: GoogleFonts.poppins(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: theme
+                                                        .colorScheme
+                                                        .primary,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                          // Navigation card
+                          GestureDetector(
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => RecordingsListPage(
+                                    allRecordings: allRecordings,
+                                    onRecordingToggled: (entry) =>
+                                        _togglePlayRecordingItem(
+                                          entry,
+                                          allRecordings,
+                                          playbackContext: 'list',
+                                        ),
+                                    playbackProgress: _currentPlaybackProgress,
+                                    totalDuration: _currentTotalDuration,
+                                    currentlyPlayingFileIdNotifier:
+                                        _currentlyPlayingFileIdNotifier,
+                                    isActuallyPlayingNotifier:
+                                        _isActuallyPlayingNotifier,
+                                    onSeekRequest: _handleSeek,
+                                    onDelete: _handleDismissRecording,
+                                    onShareFile: _shareRecordingFile,
+                                    onShareTranscription:
+                                        _shareTranscriptionText,
+                                    onRename: _renameRecording,
+                                    onEditCategory: _editRecordingCategory,
+                                    onToggleHidden: _moveToVault,
+                                    onGenerateTranscription:
+                                        _transcribeWithLemonFox,
+                                  ),
+                                ),
+                              );
+                            },
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.fromLTRB(
+                                20,
+                                10,
+                                20,
+                                8,
+                              ), // Increased bottom padding to prevent overflow
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: Colors.transparent,
+                                  width: 1.5,
+                                ),
+                                boxShadow: [
+                                  // Main shadow
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.04),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                  // Light reflection effect
+                                  BoxShadow(
+                                    color: Colors.white.withOpacity(0.8),
+                                    blurRadius: 1,
+                                    offset: const Offset(0, -0.5),
+                                  ),
+                                ],
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [
+                                    theme.colorScheme.surface,
+                                    theme.colorScheme.surface.withOpacity(0.95),
+                                  ],
+                                  stops: const [0.0, 1.0],
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  // Icon container with subtle glow
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: theme.colorScheme.primary
+                                          .withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: theme.colorScheme.primary
+                                            .withOpacity(0.2),
+                                        width: 1,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: theme.colorScheme.primary
+                                              .withOpacity(0.1),
+                                          blurRadius: 8,
+                                          spreadRadius: 1,
+                                        ),
+                                      ],
+                                    ),
+                                    child: Icon(
+                                      Icons.queue_music_rounded,
+                                      color: theme.colorScheme.primary,
+                                      size: 24,
+                                    ),
+                                  ),
+
+                                  const SizedBox(width: 16),
+
+                                  // Text content
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'View All Recordings',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                            color:
+                                                theme.colorScheme.onBackground,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          totalRecordings > 0
+                                              ? 'Browse through $totalRecordings recordings'
+                                              : 'No recordings yet',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w400,
+                                            color: theme
+                                                .colorScheme
+                                                .onBackground
+                                                .withOpacity(0.6),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+
+                                  // Arrow indicator
+                                  Icon(
+                                    Icons.arrow_forward_ios_rounded,
+                                    color: theme.colorScheme.onBackground
+                                        .withOpacity(0.4),
+                                    size: 16,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                        ],
                       );
                     },
                   ),
                 ),
+
+                const SizedBox(height: 20),
+
+                const SizedBox(height: 20),
               ],
             );
           },
@@ -1572,7 +1829,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       ),
     );
 
-    // --- Add persistent transcription progress bar overlay ---
+    // Stack with transcription overlay
     return Stack(
       children: [
         if (_selectedMethod == HiddenAccessTriggerMethod.pinchInScreen ||
@@ -1607,6 +1864,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ),
       ],
     );
+  }
+
+  String _formatDuration(Duration duration) {
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+
+    if (hours > 0) {
+      return '${hours}h ${minutes}m';
+    } else {
+      return '${minutes}m';
+    }
   }
 }
 

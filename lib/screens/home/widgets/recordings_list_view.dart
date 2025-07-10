@@ -51,6 +51,10 @@ class RecordingsListView extends StatefulWidget {
 }
 
 class _RecordingsListViewState extends State<RecordingsListView> {
+  // Track expanded transcription state per card
+  final Set<String> _expandedTranscriptionIds = {};
+  final Set<String>? _hiddenTranscriptionIds = {}; // Manage hidden transcription IDs
+
   List<RecordingEntry> _filterAndSortRecordings(Box<RecordingEntry> box) {
     var recordings = box.values.toList();
 
@@ -134,6 +138,9 @@ class _RecordingsListViewState extends State<RecordingsListView> {
             final entry = filteredAndSortedRecordings[index];
             final bool isThisCardPlaying =
                 widget.currentlyPlayingFileId == entry.id;
+            final bool isTranscriptionExpanded = _expandedTranscriptionIds
+                .contains(entry.id);
+            final bool isTranscriptionHidden = _hiddenTranscriptionIds?.contains(entry.id) ?? false;
             return RecordingListItemWidget(
               entry: entry,
               isPlaying: isThisCardPlaying,
@@ -154,6 +161,29 @@ class _RecordingsListViewState extends State<RecordingsListView> {
                   ? widget.currentTotalDuration
                   : null,
               onSeekRequest: isThisCardPlaying ? widget.onSeekRequest : null,
+              isTranscriptionExpanded: isTranscriptionExpanded,
+              isTranscriptionHidden: isTranscriptionHidden,
+              onToggleTranscription: () {
+                setState(() {
+                  if (isTranscriptionExpanded) {
+                    _expandedTranscriptionIds.remove(entry.id);
+                  } else {
+                    _expandedTranscriptionIds.add(entry.id);
+                  }
+                });
+              },
+              onToggleTranscriptionVisibility: () {
+                setState(() {
+                  if (isTranscriptionHidden) {
+                    _hiddenTranscriptionIds?.remove(entry.id);
+                  } else {
+                    _hiddenTranscriptionIds?.add(entry.id);
+                  }
+                });
+              },
+              onViewTranscription: widget.onViewTranscription != null
+                  ? () => widget.onViewTranscription!(entry)
+                  : null,
             );
           },
         );

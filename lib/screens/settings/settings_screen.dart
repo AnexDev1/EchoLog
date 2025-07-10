@@ -1,5 +1,4 @@
 import 'package:echolog/services/data_exporter_service.dart';
-
 import 'package:echolog/services/security_service.dart'; // Ensure correct path
 import 'package:echolog/theme/theme_provider.dart';
 import 'package:flutter/material.dart';
@@ -695,7 +694,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: _buildSettingsItem(
                 icon: Icons.info_outline,
                 title: 'App Version',
-                subtitle: '2.2.5',
+                subtitle: '2.3.7',
                 trailing: const SizedBox.shrink(),
                 onTap: null,
               ),

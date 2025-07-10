@@ -1,8 +1,13 @@
-import 'package:echolog/screens/locked/locked_screen.dart';
+import 'package:echolog/models/custom_category.dart';
+import 'package:echolog/models/recording_entry.dart';
+import 'package:echolog/providers/playback_provider.dart';
 import 'package:echolog/providers/streak_provider.dart';
-
-import 'package:echolog/services/recording_service.dart';
+import 'package:echolog/providers/transcription_status_provider.dart';
+import 'package:echolog/screens/home/home_screen.dart';
+import 'package:echolog/screens/locked/locked_screen.dart';
 import 'package:echolog/services/security_service.dart';
+import 'package:echolog/theme/app_themes.dart';
+import 'package:echolog/theme/theme_provider.dart';
 import 'package:echolog/utils/color_adapter.dart';
 import 'package:echolog/utils/duration_adapter.dart';
 import 'package:flutter/material.dart';
@@ -12,14 +17,6 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
-import 'package:echolog/theme/app_themes.dart';
-import 'package:echolog/screens/home/home_screen.dart';
-import 'package:echolog/models/custom_category.dart';
-import 'package:echolog/models/recording_entry.dart';
-import 'package:echolog/providers/playback_provider.dart';
-import 'package:echolog/theme/theme_provider.dart';
-import 'package:echolog/providers/transcription_status_provider.dart';
-
 const String WIDGET_METHOD_CHANNEL_NAME = "com.anexon.echolog/widget";
 const String recordingsBoxName = 'recordingsBoxv2';
 const String customCategoriesBoxName = 'customCategoriesBox';
@@ -28,6 +25,12 @@ const String appSettingsBoxName = 'appSettingsBox';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      systemNavigationBarColor: Colors.transparent,
+    ),
+  );
   await dotenv.load(fileName: ".env");
   final appDocumentDir = await getApplicationDocumentsDirectory();
   await Hive.initFlutter(appDocumentDir.path);

@@ -6,6 +6,7 @@ import android.content.Context // Not strictly needed here if not using for Shar
 import android.content.Intent
 import android.os.Bundle // For onCreate
 import android.util.Log
+import androidx.core.view.WindowCompat
 
 import androidx.annotation.NonNull
 import io.flutter.embedding.android.FlutterFragmentActivity
@@ -15,6 +16,11 @@ import io.flutter.plugins.GeneratedPluginRegistrant
 
 class MainActivity: FlutterFragmentActivity() {
     private val WIDGET_METHOD_CHANNEL_NAME = "com.anexon.echolog/widget"
+
+    override fun onPostResume() {
+        super.onPostResume()
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

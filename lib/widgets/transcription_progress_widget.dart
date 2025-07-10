@@ -1,0 +1,453 @@
+import 'dart:async';
+import 'dart:math' as math;
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+class TranscriptionProgressWidget extends StatefulWidget {
+  final Duration recordingDuration;
+  final Color accentColor;
+  final VoidCallback? onCancel;
+  final bool isDark;
+
+  const TranscriptionProgressWidget({
+    Key? key,
+    required this.recordingDuration,
+    required this.accentColor,
+    this.onCancel,
+    this.isDark = false,
+  }) : super(key: key);
+
+  @override
+  State<TranscriptionProgressWidget> createState() =>
+      _TranscriptionProgressWidgetState();
+}
+
+class _TranscriptionProgressWidgetState
+    extends State<TranscriptionProgressWidget>
+    with TickerProviderStateMixin {
+  late AnimationController _progressController;
+  late AnimationController _pulseController;
+  late AnimationController _fadeController;
+  late Animation<double> _progressAnimation;
+  late Animation<double> _pulseAnimation;
+  late Animation<double> _fadeAnimation;
+
+  int _currentStage = 0;
+  Timer? _stageTimer;
+  Timer? _progressTimer;
+  double _overallProgress = 0.0;
+  bool _isCompleted = false;
+
+  final List<TranscriptionStage> _stages = [
+    TranscriptionStage(
+      title: "Initializing",
+      description: "Preparing audio analysis...",
+      duration: Duration(milliseconds: 1200),
+      icon: Icons.settings_outlined,
+    ),
+    TranscriptionStage(
+      title: "Detecting Language",
+      description: "Analyzing speech patterns...",
+      duration: Duration(milliseconds: 1800),
+      icon: Icons.language_outlined,
+    ),
+    TranscriptionStage(
+      title: "Processing Audio",
+      description: "Enhancing audio quality...",
+      duration: Duration(milliseconds: 2200),
+      icon: Icons.graphic_eq_outlined,
+    ),
+    TranscriptionStage(
+      title: "Transcribing Speech",
+      description: "Converting speech to text...",
+      duration: Duration(milliseconds: 3500),
+      icon: Icons.mic_outlined,
+    ),
+    TranscriptionStage(
+      title: "Refining Results",
+      description: "Improving accuracy and formatting...",
+      duration: Duration(milliseconds: 1800),
+      icon: Icons.auto_fix_high_outlined,
+    ),
+    TranscriptionStage(
+      title: "Finalizing",
+      description: "Preparing transcription...",
+      duration: Duration(milliseconds: 1000),
+      icon: Icons.check_circle_outline,
+    ),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _setupAnimations();
+    _startTranscription();
+  }
+
+  void _setupAnimations() {
+    _progressController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    );
+
+    _fadeController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+
+    _progressAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _progressController, curve: Curves.easeInOut),
+    );
+
+    _pulseAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    _fadeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _fadeController, curve: Curves.easeOut));
+
+    _pulseController.repeat(reverse: true);
+    _fadeController.forward();
+  }
+
+  void _startTranscription() {
+    _advanceStage();
+
+    // Start overall progress timer
+    _progressTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+      if (!mounted) return;
+
+      final totalDuration = _stages.fold<int>(
+        0,
+        (sum, stage) => sum + stage.duration.inMilliseconds,
+      );
+
+      final currentStageStartTime = _stages
+          .take(_currentStage)
+          .fold<int>(0, (sum, stage) => sum + stage.duration.inMilliseconds);
+
+      final elapsedInCurrentStage = timer.tick * 50;
+      final totalElapsed = currentStageStartTime + elapsedInCurrentStage;
+
+      setState(() {
+        _overallProgress = (totalElapsed / totalDuration).clamp(0.0, 1.0);
+      });
+
+      if (_overallProgress >= 1.0) {
+        timer.cancel();
+        _completeTranscription();
+      }
+    });
+  }
+
+  void _advanceStage() {
+    if (_currentStage >= _stages.length) return;
+
+    _progressController.forward(from: 0.0);
+
+    _stageTimer?.cancel();
+    _stageTimer = Timer(_stages[_currentStage].duration, () {
+      if (!mounted) return;
+
+      if (_currentStage < _stages.length - 1) {
+        setState(() {
+          _currentStage++;
+        });
+        _advanceStage();
+      }
+    });
+  }
+
+  void _completeTranscription() {
+    setState(() {
+      _isCompleted = true;
+      _overallProgress = 1.0;
+    });
+
+    _pulseController.stop();
+    _progressController.forward();
+
+    // Auto-dismiss after showing completion
+    Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _progressController.dispose();
+    _pulseController.dispose();
+    _fadeController.dispose();
+    _stageTimer?.cancel();
+    _progressTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentStage = _currentStage < _stages.length
+        ? _stages[_currentStage]
+        : _stages.last;
+
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: widget.isDark
+            ? const Color(0xFF1C1C1E).withOpacity(0.95)
+            : Colors.white.withOpacity(0.95),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: widget.isDark
+              ? Colors.white.withOpacity(0.1)
+              : Colors.black.withOpacity(0.05),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.3),
+            blurRadius: 40,
+            offset: const Offset(0, 20),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Header with pulsing icon
+          FadeTransition(
+            opacity: _fadeAnimation,
+            child: AnimatedBuilder(
+              animation: _pulseAnimation,
+              builder: (context, child) {
+                return Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        widget.accentColor.withOpacity(0.2),
+                        widget.accentColor.withOpacity(0.05),
+                      ],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: widget.accentColor.withOpacity(
+                          0.3 + (_pulseAnimation.value * 0.2),
+                        ),
+                        blurRadius: 20 + (_pulseAnimation.value * 10),
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: widget.accentColor.withOpacity(0.1),
+                    ),
+                    child: Icon(
+                      _isCompleted ? Icons.check_circle : currentStage.icon,
+                      size: 40,
+                      color: widget.accentColor,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // Stage title
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            child: Text(
+              _isCompleted ? "Transcription Complete!" : currentStage.title,
+              key: ValueKey(_isCompleted ? "completed" : currentStage.title),
+              style: GoogleFonts.inter(
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                color: widget.isDark ? Colors.white : Colors.black87,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+
+          const SizedBox(height: 8),
+
+          // Stage description
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            child: Text(
+              _isCompleted
+                  ? "Your audio has been successfully transcribed"
+                  : currentStage.description,
+              key: ValueKey(
+                _isCompleted ? "completed_desc" : currentStage.description,
+              ),
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                color: (widget.isDark ? Colors.white : Colors.black87)
+                    .withOpacity(0.7),
+                height: 1.4,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+
+          const SizedBox(height: 32),
+
+          // Progress bar
+          Container(
+            height: 8,
+            decoration: BoxDecoration(
+              color: widget.isDark
+                  ? Colors.white.withOpacity(0.1)
+                  : Colors.black.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Stack(
+              children: [
+                // Overall progress
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width:
+                      MediaQuery.of(context).size.width *
+                      0.6 *
+                      _overallProgress,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        widget.accentColor,
+                        widget.accentColor.withOpacity(0.8),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                // Animated shimmer effect
+                if (!_isCompleted)
+                  AnimatedBuilder(
+                    animation: _progressAnimation,
+                    builder: (context, child) {
+                      return Positioned(
+                        left:
+                            (MediaQuery.of(context).size.width *
+                                0.6 *
+                                _overallProgress) -
+                            20,
+                        child: Container(
+                          width: 40,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Colors.white.withOpacity(0.0),
+                                Colors.white.withOpacity(0.3),
+                                Colors.white.withOpacity(0.0),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Progress percentage and stage indicator
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                "${(_overallProgress * 100).toInt()}%",
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: widget.accentColor,
+                ),
+              ),
+              Text(
+                "Stage  {_currentStage + 1} of ${_stages.length}",
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  color: (widget.isDark ? Colors.white : Colors.black87)
+                      .withOpacity(0.6),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 24),
+
+          // Stage indicators
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(_stages.length, (index) {
+              final isActive = index == _currentStage;
+              final isCompleted = index < _currentStage || _isCompleted;
+
+              return Container(
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                width: isActive ? 24 : 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: isCompleted
+                      ? widget.accentColor
+                      : isActive
+                      ? widget.accentColor.withOpacity(0.5)
+                      : (widget.isDark ? Colors.white : Colors.black87)
+                            .withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              );
+            }),
+          ),
+
+          const SizedBox(height: 24),
+
+          // Cancel button (only show if not completed)
+          if (!_isCompleted && widget.onCancel != null)
+            TextButton(
+              onPressed: widget.onCancel,
+              child: Text(
+                "Cancel",
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  color: (widget.isDark ? Colors.white : Colors.black87)
+                      .withOpacity(0.7),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class TranscriptionStage {
+  final String title;
+  final String description;
+  final Duration duration;
+  final IconData icon;
+
+  TranscriptionStage({
+    required this.title,
+    required this.description,
+    required this.duration,
+    required this.icon,
+  });
+}

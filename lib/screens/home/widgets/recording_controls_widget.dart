@@ -10,6 +10,7 @@ class RecordingControlsWidget extends StatelessWidget {
   final bool isRecorderInitialized;
   final VoidCallback onStartStopRecording;
   final VoidCallback onTogglePausePlayRecording;
+  final Color recordIconColor;
 
   static const double _buttonCircularDiameter = 80.0;
   static const double _iconSize = 40.0;
@@ -24,6 +25,7 @@ class RecordingControlsWidget extends StatelessWidget {
     required this.isRecorderInitialized,
     required this.onStartStopRecording,
     required this.onTogglePausePlayRecording,
+    required this.recordIconColor,
     required Color waveformColor,
   });
 
@@ -50,7 +52,11 @@ class RecordingControlsWidget extends StatelessWidget {
       targetHeight = 65.0;
       targetBorderRadius = BorderRadius.circular(35.0);
 
-      if (theme.brightness == Brightness.light) {
+      if (categorySelected &&
+          selectedCategoryData != null &&
+          selectedCategoryData?['color'] != null) {
+        targetBackgroundColor = selectedCategoryData?['color'] as Color;
+      } else if (theme.brightness == Brightness.light) {
         targetBackgroundColor = theme.colorScheme.surfaceContainerHigh;
       } else {
         targetBackgroundColor = theme.colorScheme.surface.withOpacity(0.95);
@@ -66,9 +72,10 @@ class RecordingControlsWidget extends StatelessWidget {
       ];
     } else {
       if (categorySelected && isRecorderInitialized) {
-        targetBackgroundColor = theme.colorScheme.secondary;
+        // Use a whitish color for the circular recording button
+        targetBackgroundColor = Colors.white;
       } else {
-        targetBackgroundColor = theme.colorScheme.surfaceVariant;
+        targetBackgroundColor = theme.colorScheme.surfaceContainerHighest;
       }
       targetBoxShadow = [
         BoxShadow(
@@ -129,7 +136,7 @@ class RecordingControlsWidget extends StatelessWidget {
   }) {
     Color currentIconColor;
     if (isActive) {
-      currentIconColor = theme.colorScheme.onSecondary;
+      currentIconColor = recordIconColor;
     } else {
       currentIconColor = theme.colorScheme.onSurfaceVariant.withOpacity(0.6);
     }

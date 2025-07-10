@@ -1,29 +1,28 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:echolog/main.dart';
 import 'package:echolog/models/recording_entry.dart';
+import 'package:echolog/providers/transcription_status_provider.dart';
 import 'package:echolog/screens/home/widgets/category_selector_widget.dart';
 import 'package:echolog/services/password_service.dart';
+import 'package:echolog/services/security_service.dart';
 import 'package:echolog/utils/custom_snackbar.dart';
 import 'package:echolog/widgets/dialogs/create_password_dialog.dart';
 import 'package:echolog/widgets/dialogs/enter_password_dialog.dart';
 import 'package:echolog/widgets/recording_card.dart';
+import 'package:echolog/widgets/transcription_progress_bar.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_sound/flutter_sound.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:flutter_sound/flutter_sound.dart';
-import 'dart:async';
-import 'dart:io';
+import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'package:echolog/services/security_service.dart';
-import 'dart:math';
-import 'package:flutter/foundation.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:echolog/providers/transcription_status_provider.dart';
-import 'package:echolog/widgets/transcription_progress_bar.dart';
 
 class HiddenRecordingsScreen extends StatefulWidget {
   const HiddenRecordingsScreen({super.key});
@@ -911,6 +910,8 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
                       ),
                     );
                   }
+                  // --- Per-card transcription expand/collapse state ---
+                  // (removed unused expandedTranscriptionIds)
                   return ListView.builder(
                     itemCount: recordings.length,
                     itemBuilder: (context, index) {
@@ -927,11 +928,9 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
                                     _currentTotalDuration.inMilliseconds)
                                 .clamp(0.0, 1.0);
                       }
-                      // Remove Dismissible, just return the RecordingCard directly
+                      // final isTranscriptionExpanded = expandedTranscriptionIds.contains(entry.id);
                       return RecordingCard(
-                        key: ValueKey(
-                          'rc_${entry.id}_${showAsPlayingButton}_${progressPercentForThisCard.toStringAsFixed(4)}',
-                        ),
+                        key: ValueKey(entry.id),
                         recording: entry,
                         isPlaying: showAsPlayingButton,
                         onPlayToggle: () => _togglePlayRecordingItem(entry),
