@@ -13,6 +13,7 @@ import 'package:echolog/utils/duration_adapter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_gemini/flutter_gemini.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
@@ -34,6 +35,10 @@ Future<void> main() async {
   await dotenv.load(fileName: ".env");
   final appDocumentDir = await getApplicationDocumentsDirectory();
   await Hive.initFlutter(appDocumentDir.path);
+
+  // Gemini API initialization
+  const apiKey = 'AIzaSyD_T1TccSIXrgxmvu_bW1FUiIXImCYKOP8';
+  Gemini.init(apiKey: apiKey);
 
   if (!Hive.isAdapterRegistered(ColorAdapter().typeId)) {
     Hive.registerAdapter(ColorAdapter());

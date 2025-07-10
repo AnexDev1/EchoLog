@@ -30,10 +30,10 @@ import 'package:echolog/widgets/transcription_progress_bar.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_gemini/flutter_gemini.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -583,18 +583,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         : '${fullText.substring(0, maxLength)}...';
   }
 
-  Future<void> _transcribeWithLemonFox(RecordingEntry entry) async {
+  Future<void> _transcribeWithGemini(RecordingEntry entry) async {
     await _stopPlaybackAndResetState(); // Stop playback before transcribing
     final transcriptionStatus = Provider.of<TranscriptionStatusProvider>(
       context,
       listen: false,
     );
-    if (_lemonFoxApiKey.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Lemonfox API Key not set.')),
-      );
-      return;
-    }
     if (entry.filePath.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Error: Recording file path is missing.')),
@@ -611,65 +605,39 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     transcriptionStatus.startTranscription(entry.id);
     try {
-      // Simulate progress: Preparing
       transcriptionStatus.updateProgress(0.1, 'Preparing to transcribe...');
       await Future.delayed(const Duration(milliseconds: 600));
-      // Simulate progress: Detecting language
       transcriptionStatus.updateProgress(0.3, 'Detecting language...');
       await Future.delayed(const Duration(milliseconds: 900));
-      // Simulate progress: Transcribing
       transcriptionStatus.updateProgress(0.6, 'Transcribing...');
       await Future.delayed(const Duration(milliseconds: 1200));
-      // Actually send the request
-      final Uri apiUri = Uri.parse(
-        "https://api.lemonfox.ai/v1/audio/transcriptions",
-      );
-      var request = http.MultipartRequest('POST', apiUri);
-      request.headers['Authorization'] = 'Bearer $_lemonFoxApiKey';
-      request.files.add(
-        await http.MultipartFile.fromPath('file', entry.filePath),
-      );
-      request.fields['response_format'] = 'json';
-      final streamedResponse = await request.send();
-      final response = await http.Response.fromStream(streamedResponse);
-      if (response.statusCode == 200) {
-        transcriptionStatus.updateProgress(0.95, 'Finalizing transcription...');
-        final Map<String, dynamic> responseData = jsonDecode(response.body);
-        final String? transcriptText = responseData['text'];
-        if (transcriptText != null) {
-          final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
-          entry.transcription = transcriptText;
-          await recordingsBox.put(entry.id, entry);
-          transcriptionStatus.finishTranscription();
-          // Removed: showCustomSnackBar for 'Transcription complete!'
-        } else {
-          transcriptionStatus.failTranscription(
-            'Transcription text not found.',
-          );
-          throw Exception('Transcription text not found.');
-        }
+
+      final bytes = await audioFile.readAsBytes();
+      // Convert bytes to base64 string for InlineData
+      final base64Audio = base64Encode(bytes);
+      // Gemini prompt: Let Gemini know to transcribe and keep the language
+      final prompt = [
+        Part.text(
+          'Transcribe the following audio. If the speaker uses multiple languages (e.g., English and Amharic), transcribe each part in the language it was spoken. Do not translate. The output should include all languages as spoken in the audio.',
+        ),
+        Part.inline(InlineData(data: base64Audio, mimeType: 'audio/aac')),
+      ];
+      final gemini = Gemini.instance;
+      final response = await gemini.prompt(parts: prompt);
+      final transcriptText = response?.output;
+      if (transcriptText != null && transcriptText.trim().isNotEmpty) {
+        final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
+        entry.transcription = transcriptText;
+        await recordingsBox.put(entry.id, entry);
+        transcriptionStatus.finishTranscription();
       } else {
-        String errorMessage = "Error ${response.statusCode}";
-        try {
-          final Map<String, dynamic> errorData = jsonDecode(response.body);
-          errorMessage += "\n${errorData['error'] ?? 'Unknown error'}";
-          errorMessage += (errorData['detail'] != null
-              ? errorData['detail']
-              : (errorData['message'] != null
-                    ? errorData['message']
-                    : response.body));
-        } catch (_) {
-          errorMessage += "\n${response.body}";
-        }
-        transcriptionStatus.failTranscription(errorMessage);
-        throw Exception(errorMessage);
+        transcriptionStatus.failTranscription('Transcription text not found.');
+        throw Exception('Transcription text not found.');
       }
     } catch (e) {
-      transcriptionStatus.failTranscription(
-        'Lemonfox transcription failed: $e',
-      );
+      transcriptionStatus.failTranscription('Gemini transcription failed: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Lemonfox transcription failed: $e')),
+        SnackBar(content: Text('Gemini transcription failed: $e')),
       );
     }
   }
@@ -1484,8 +1452,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         category: _selectedCategoryData != null
                             ? RecordingCategory(
                                 name: _selectedCategoryData?['name'] ?? '',
-                                color: _selectedCategoryData?['color'] ?? theme.colorScheme.primary,
-                                iconColor: _selectedCategoryData?['iconColor'] ?? theme.colorScheme.primary,
+                                color:
+                                    _selectedCategoryData?['color'] ??
+                                    theme.colorScheme.primary,
+                                iconColor:
+                                    _selectedCategoryData?['iconColor'] ??
+                                    theme.colorScheme.primary,
                               )
                             : null,
                       ),
@@ -1683,7 +1655,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                     onEditCategory: _editRecordingCategory,
                                     onToggleHidden: _moveToVault,
                                     onGenerateTranscription:
-                                        _transcribeWithLemonFox,
+                                        _transcribeWithGemini,
                                   ),
                                 ),
                               );

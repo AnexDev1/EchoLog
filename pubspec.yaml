@@ -32,6 +32,7 @@ dependencies:
   local_auth: ^2.3.0
   encrypt: ^5.0.3
   flutter_dotenv: ^5.1.0
+  flutter_gemini: ^3.0.0
 
 dev_dependencies:
   flutter_test:
