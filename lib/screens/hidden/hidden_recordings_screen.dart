@@ -13,7 +13,7 @@ import 'package:echolog/utils/custom_snackbar.dart';
 import 'package:echolog/widgets/dialogs/create_password_dialog.dart';
 import 'package:echolog/widgets/dialogs/enter_password_dialog.dart';
 import 'package:echolog/widgets/recording_card.dart';
-import 'package:echolog/widgets/transcription_progress_bar.dart';
+import 'package:echolog/widgets/transcription_progress_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_sound/flutter_sound.dart';
@@ -1052,20 +1052,6 @@ class _HiddenRecordingsScreenState extends State<HiddenRecordingsScreen> {
           ),
           floatingActionButtonLocation:
               FloatingActionButtonLocation.centerFloat,
-        ),
-        Consumer<TranscriptionStatusProvider>(
-          builder: (context, transcriptionStatus, _) {
-            if (!transcriptionStatus.isTranscribing) return SizedBox.shrink();
-            return Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: TranscriptionProgressBar(
-                progress: transcriptionStatus.progress,
-                statusText: transcriptionStatus.statusText,
-              ),
-            );
-          },
         ),
       ],
     );

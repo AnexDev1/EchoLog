@@ -1,15 +1,37 @@
 // import 'dart:async';
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:ui';
 
 import 'package:animated_text_kit/animated_text_kit.dart';
+import 'package:echolog/main.dart';
 import 'package:echolog/models/recording_entry.dart';
+import 'package:echolog/services/api_key_service.dart';
+import 'package:echolog/services/security_service.dart';
+import 'package:echolog/widgets/transcription_progress_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_gemini/flutter_gemini.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+// Helper for url_launcher LaunchMode (for backward compatibility)
+// Remove this if LaunchMode is already available in your url_launcher version
+enum _LaunchMode { platformDefault, inAppWebView, externalApplication }
+
+Future<void> _launchApiKeyUrl() async {
+  final url = Uri.parse('https://aistudio.google.com/apikey');
+  // Try to use LaunchMode if available, otherwise fallback
+  try {
+    await launchUrl(url, mode: LaunchMode.externalApplication);
+  } catch (_) {
+    await launch(url.toString());
+  }
+}
 
 class RecordingCard extends StatefulWidget {
   final RecordingEntry recording;
@@ -308,6 +330,7 @@ class _RecordingCardState extends State<RecordingCard>
 
     final String? summaryPreview = widget.recording.summaryPreview;
     final String? fullTranscription = widget.recording.transcription;
+    final String? transcriptionError = widget.recording.transcriptionError;
     final bool hasFullTranscription =
         fullTranscription != null && fullTranscription.isNotEmpty;
     final bool hasSummary = summaryPreview != null && summaryPreview.isNotEmpty;
@@ -317,7 +340,10 @@ class _RecordingCardState extends State<RecordingCard>
     const int collapsedPreviewLength = 120;
 
     if (!_isTranscriptionHidden) {
-      if (hasFullTranscription) {
+      if (transcriptionError != null && transcriptionError.isNotEmpty) {
+        transcriptionTextToShow = transcriptionError;
+        canExpand = false;
+      } else if (hasFullTranscription) {
         if (_isTranscriptionExpanded) {
           transcriptionTextToShow = fullTranscription;
         } else {
@@ -600,24 +626,25 @@ class _RecordingCardState extends State<RecordingCard>
               ),
               const Spacer(),
               if (canExpand)
-                GestureDetector(
-                  onTap: () {
+                IconButton(
+                  icon: Icon(
+                    _isTranscriptionExpanded
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    size: 22,
+                    color: theme.colorScheme.onSurface.withOpacity(0.7),
+                  ),
+                  onPressed: () {
                     setState(() {
                       _isTranscriptionExpanded = !_isTranscriptionExpanded;
                     });
                   },
-                  child: Icon(
-                    _isTranscriptionExpanded
-                        ? Icons.keyboard_arrow_up
-                        : Icons.keyboard_arrow_down,
-                    size: 18,
-                    color: theme.colorScheme.onSurface.withOpacity(0.6),
-                  ),
+                  tooltip: _isTranscriptionExpanded ? 'Collapse' : 'Expand',
                 ),
             ],
           ),
-          const SizedBox(height: 12),
           GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: canExpand
                 ? () {
                     setState(() {
@@ -625,17 +652,34 @@ class _RecordingCardState extends State<RecordingCard>
                     });
                   }
                 : null,
-            child: Text(
-              transcriptionTextToShow,
-              style: GoogleFonts.inter(
-                fontSize: 13,
-                color: theme.colorScheme.onSurface.withOpacity(0.8),
-                height: 1.5,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2.0),
+              child: AnimatedCrossFade(
+                firstChild: Text(
+                  transcriptionTextToShow,
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: theme.colorScheme.onSurface.withOpacity(0.8),
+                    height: 1.5,
+                  ),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                secondChild: Text(
+                  transcriptionTextToShow,
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: theme.colorScheme.onSurface.withOpacity(0.8),
+                    height: 1.5,
+                  ),
+                  maxLines: null,
+                  overflow: TextOverflow.visible,
+                ),
+                crossFadeState: _isTranscriptionExpanded
+                    ? CrossFadeState.showSecond
+                    : CrossFadeState.showFirst,
+                duration: const Duration(milliseconds: 200),
               ),
-              maxLines: _isTranscriptionExpanded ? null : 3,
-              overflow: _isTranscriptionExpanded
-                  ? TextOverflow.visible
-                  : TextOverflow.ellipsis,
             ),
           ),
           if (_isGettingAIResponse)
@@ -1117,12 +1161,7 @@ class _RecordingCardState extends State<RecordingCard>
         widget.onShare?.call();
         break;
       case 'transcribe':
-        _showTranscriptionProgress(context);
-        // Delay the actual transcription logic until after the dialog is shown
-        // (optionally, you can start transcription immediately if needed)
-        Future.delayed(const Duration(milliseconds: 100), () {
-          widget.onTranscribe?.call();
-        });
+        _handleTranscribeWithApiKey(context);
         break;
       case 'move_to_vault':
         widget.onMoveToVault?.call();
@@ -1177,19 +1216,289 @@ class _RecordingCardState extends State<RecordingCard>
     }
   }
 
+  Future<void> _handleTranscribeWithApiKey(BuildContext context) async {
+    // Always fetch the latest API key and re-init Gemini before every transcription
+    final apiKey = await ApiKeyService.getApiKey();
+    String? errorMsg;
+    // Always clear Gemini instance before checking key (handles cleared key at runtime)
+    // Gemini.init(apiKey: '');
+    if (apiKey == null || apiKey.isEmpty) {
+      // Show user-friendly dialog to enter API key
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext dialogContext) {
+          final theme = Theme.of(dialogContext);
+          final isDark = theme.brightness == Brightness.dark;
+          final TextEditingController _apiKeyController =
+              TextEditingController();
+          return StatefulBuilder(
+            builder: (context, setState) {
+              return Dialog(
+                backgroundColor: Colors.transparent,
+                child: Container(
+                  width: 360,
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? const Color(0xFF1C1C1E).withOpacity(0.98)
+                        : Colors.white.withOpacity(0.98),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: isDark
+                          ? Colors.white.withOpacity(0.1)
+                          : Colors.black.withOpacity(0.05),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.18),
+                        blurRadius: 32,
+                        offset: const Offset(0, 12),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.vpn_key_rounded,
+                            color: theme.colorScheme.primary,
+                            size: 28,
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            'Enter Gemini API Key',
+                            style: GoogleFonts.inter(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              color: theme.colorScheme.onSurface,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+                      Text(
+                        'To transcribe audio, you need a Gemini API key. You can get one for free from Google AI Studio.',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          color: theme.colorScheme.onSurface.withOpacity(0.7),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      GestureDetector(
+                        onTap: _launchApiKeyUrl,
+                        child: Text(
+                          'Get an API key',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            color: theme.colorScheme.primary,
+                            decoration: TextDecoration.underline,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      TextField(
+                        controller: _apiKeyController,
+                        obscureText: true,
+                        decoration: InputDecoration(
+                          labelText: 'Gemini API Key',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        style: GoogleFonts.inter(fontSize: 15),
+                        autofocus: true,
+                        onSubmitted: (_) async {
+                          if (_apiKeyController.text.trim().isNotEmpty) {
+                            await ApiKeyService.saveApiKey(
+                              _apiKeyController.text.trim(),
+                            );
+                            Navigator.of(dialogContext).pop();
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 24),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _ModernButton(
+                              text: 'Cancel',
+                              onPressed: () {
+                                Navigator.of(dialogContext).pop();
+                              },
+                              isSecondary: true,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _ModernButton(
+                              text: 'Save & Retry',
+                              onPressed: () async {
+                                if (_apiKeyController.text.trim().isNotEmpty) {
+                                  await ApiKeyService.saveApiKey(
+                                    _apiKeyController.text.trim(),
+                                  );
+                                  Navigator.of(dialogContext).pop();
+                                  // Retry transcription after saving
+                                  _handleTranscribeWithApiKey(context);
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+      return;
+    } else {
+      try {
+        Gemini.init(apiKey: apiKey);
+      } catch (e) {
+        errorMsg = 'Failed to initialize Gemini: $e';
+      }
+    }
+    if (errorMsg != null) {
+      final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
+      final updatedEntry = widget.recording.copyWith(
+        transcriptionError: errorMsg,
+      );
+      await recordingsBox.put(widget.recording.id, updatedEntry);
+      if (mounted) setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(errorMsg), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    // Show transcription progress dialog with all logic (including Gemini.init)
+    _showTranscriptionProgress(context, () async {
+      // Always re-init Gemini with the latest key before every transcription
+      Gemini.init(apiKey: apiKey!);
+      final entry = widget.recording;
+      if (entry.filePath.isEmpty) {
+        final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
+        final updatedEntry = entry.copyWith(
+          transcriptionError: 'Recording file path is missing.',
+        );
+        await recordingsBox.put(entry.id, updatedEntry);
+        if (mounted) setState(() {});
+        throw Exception('Recording file path is missing.');
+      }
+      String entryFilePath = entry.filePath;
+      bool isEncrypted = entryFilePath.endsWith('.enc');
+      String fileToTranscribe = entryFilePath;
+      File? tempDecryptedFile;
+      if (isEncrypted) {
+        final tempDir = await Directory.systemTemp.createTemp(
+          'echolog_transcribe',
+        );
+        final tempFilePath =
+            '${tempDir.path}/transcribe_${entry.id}_${DateTime.now().millisecondsSinceEpoch}.aac';
+        try {
+          await SecurityService().decryptFile(entryFilePath, tempFilePath);
+          fileToTranscribe = tempFilePath;
+          tempDecryptedFile = File(tempFilePath);
+        } catch (e) {
+          final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
+          final updatedEntry = entry.copyWith(
+            transcriptionError: 'Error decrypting for transcription.',
+          );
+          await recordingsBox.put(entry.id, updatedEntry);
+          if (mounted) setState(() {});
+          throw Exception('Error decrypting for transcription.');
+        }
+      }
+      final audioFile = File(fileToTranscribe);
+      if (!await audioFile.exists()) {
+        if (tempDecryptedFile != null && await tempDecryptedFile.exists()) {
+          await tempDecryptedFile.delete();
+        }
+        final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
+        final updatedEntry = entry.copyWith(
+          transcriptionError: 'Recording file not found.',
+        );
+        await recordingsBox.put(entry.id, updatedEntry);
+        if (mounted) setState(() {});
+        throw Exception('Recording file not found.');
+      }
+      final bytes = await audioFile.readAsBytes();
+      final base64Audio = base64Encode(bytes);
+      final prompt = [
+        Part.text(
+          'Transcribe the following audio. If the speaker uses multiple languages (e.g., English and Amharic), transcribe each part in the language it was spoken. Do not translate. The output should include all languages as spoken in the audio, make sure you recognize afan oromoo or tigigna or any other ethiopian languages really well.',
+        ),
+        Part.inline(InlineData(data: base64Audio, mimeType: 'audio/aac')),
+      ];
+      final gemini = Gemini.instance;
+      try {
+        final response = await gemini.prompt(parts: prompt);
+        if (tempDecryptedFile != null && await tempDecryptedFile.exists()) {
+          await tempDecryptedFile.delete();
+        }
+        final transcriptText = response?.output;
+        final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
+        if (transcriptText != null && transcriptText.trim().isNotEmpty) {
+          final updatedEntry = entry.copyWith(
+            transcription: transcriptText,
+            transcriptionError: null,
+          );
+          await recordingsBox.put(entry.id, updatedEntry);
+          if (widget.onTranscribe != null) {
+            widget.onTranscribe!();
+          }
+          return transcriptText;
+        } else {
+          final updatedEntry = entry.copyWith(
+            transcriptionError: 'Transcription text not found.',
+          );
+          await recordingsBox.put(entry.id, updatedEntry);
+          if (mounted) setState(() {});
+          throw Exception('Transcription text not found.');
+        }
+      } catch (e) {
+        String errMsg = e.toString();
+        if (errMsg.contains('429')) {
+          errMsg =
+              '🚫 Gemini API quota exceeded. Please try again later or check your usage limits.';
+        }
+        final recordingsBox = Hive.box<RecordingEntry>(recordingsBoxName);
+        final updatedEntry = entry.copyWith(transcriptionError: errMsg);
+        await recordingsBox.put(entry.id, updatedEntry);
+        if (mounted) setState(() {});
+        throw Exception(errMsg);
+      }
+    });
+  }
+
   // Show the transcription progress dialog
-  void _showTranscriptionProgress(BuildContext context) {
+  void _showTranscriptionProgress(
+    BuildContext context,
+    Future<String> Function() transcriptionTask,
+  ) {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (BuildContext context) {
         final theme = Theme.of(context);
         return Dialog(
+          key: const ValueKey('transcription-progress-dialog'),
           backgroundColor: Colors.transparent,
           child: TranscriptionProgressWidget(
+            key: const ValueKey('transcription-progress-widget'),
             recordingDuration: widget.recording.duration,
             accentColor: widget.recording.moodColor,
             isDark: theme.brightness == Brightness.dark,
+            transcriptionTask: transcriptionTask,
             onCancel: () {
               Navigator.of(context).pop();
               // Optionally: handle cancellation logic here
@@ -1404,475 +1713,4 @@ class _RealtimeProgressWrapperState extends State<_RealtimeProgressWrapper>
 
   @override
   Widget build(BuildContext context) => widget.builder(context);
-}
-
-class TranscriptionProgressWidget extends StatefulWidget {
-  final Duration recordingDuration;
-  final Color accentColor;
-  final VoidCallback? onCancel;
-  final bool isDark;
-
-  const TranscriptionProgressWidget({
-    Key? key,
-    required this.recordingDuration,
-    required this.accentColor,
-    this.onCancel,
-    this.isDark = false,
-  }) : super(key: key);
-
-  @override
-  State<TranscriptionProgressWidget> createState() =>
-      _TranscriptionProgressWidgetState();
-}
-
-class _TranscriptionProgressWidgetState
-    extends State<TranscriptionProgressWidget>
-    with TickerProviderStateMixin {
-  late AnimationController _progressController;
-  late AnimationController _pulseController;
-  late AnimationController _fadeController;
-  late Animation<double> _progressAnimation;
-  late Animation<double> _pulseAnimation;
-  late Animation<double> _fadeAnimation;
-
-  int _currentStage = 0;
-  Timer? _stageTimer;
-  Timer? _progressTimer;
-  double _overallProgress = 0.0;
-  bool _isCompleted = false;
-
-  final List<TranscriptionStage> _stages = [
-    TranscriptionStage(
-      title: "Initializing",
-      description: "Preparing audio analysis...",
-      duration: Duration(milliseconds: 1200),
-      icon: Icons.settings_outlined,
-    ),
-    TranscriptionStage(
-      title: "Detecting Language",
-      description: "Analyzing speech patterns...",
-      duration: Duration(milliseconds: 1800),
-      icon: Icons.language_outlined,
-    ),
-    TranscriptionStage(
-      title: "Processing Audio",
-      description: "Enhancing audio quality...",
-      duration: Duration(milliseconds: 2200),
-      icon: Icons.graphic_eq_outlined,
-    ),
-    TranscriptionStage(
-      title: "Transcribing Speech",
-      description: "Converting speech to text...",
-      duration: Duration(milliseconds: 3500),
-      icon: Icons.mic_outlined,
-    ),
-    TranscriptionStage(
-      title: "Refining Results",
-      description: "Improving accuracy and formatting...",
-      duration: Duration(milliseconds: 1800),
-      icon: Icons.auto_fix_high_outlined,
-    ),
-    TranscriptionStage(
-      title: "Finalizing",
-      description: "Preparing transcription...",
-      duration: Duration(milliseconds: 1000),
-      icon: Icons.check_circle_outline,
-    ),
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    _setupAnimations();
-    _startTranscription();
-  }
-
-  void _setupAnimations() {
-    _progressController = AnimationController(
-      duration: const Duration(milliseconds: 800),
-      vsync: this,
-    );
-
-    _pulseController = AnimationController(
-      duration: const Duration(milliseconds: 1500),
-      vsync: this,
-    );
-
-    _fadeController = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      vsync: this,
-    );
-
-    _progressAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _progressController, curve: Curves.easeInOut),
-    );
-
-    _pulseAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
-    );
-
-    _fadeAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(parent: _fadeController, curve: Curves.easeOut));
-
-    _pulseController.repeat(reverse: true);
-    _fadeController.forward();
-  }
-
-  void _startTranscription() {
-    _advanceStage();
-
-    // Start overall progress timer
-    _progressTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
-      if (!mounted) return;
-
-      final totalDuration = _stages.fold<int>(
-        0,
-        (sum, stage) => sum + stage.duration.inMilliseconds,
-      );
-
-      final currentStageStartTime = _stages
-          .take(_currentStage)
-          .fold<int>(0, (sum, stage) => sum + stage.duration.inMilliseconds);
-
-      final elapsedInCurrentStage = timer.tick * 50;
-      final totalElapsed = currentStageStartTime + elapsedInCurrentStage;
-
-      setState(() {
-        _overallProgress = (totalElapsed / totalDuration).clamp(0.0, 1.0);
-      });
-
-      if (_overallProgress >= 1.0) {
-        timer.cancel();
-        _completeTranscription();
-      }
-    });
-  }
-
-  void _advanceStage() {
-    if (_currentStage >= _stages.length) return;
-
-    _progressController.forward(from: 0.0);
-
-    _stageTimer?.cancel();
-    _stageTimer = Timer(_stages[_currentStage].duration, () {
-      if (!mounted) return;
-
-      if (_currentStage < _stages.length - 1) {
-        setState(() {
-          _currentStage++;
-        });
-        _advanceStage();
-      }
-    });
-  }
-
-  void _completeTranscription() {
-    setState(() {
-      _isCompleted = true;
-      _overallProgress = 1.0;
-    });
-
-    _pulseController.stop();
-    _progressController.forward();
-
-    // Auto-dismiss after showing completion
-    Timer(const Duration(milliseconds: 1500), () {
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _progressController.dispose();
-    _pulseController.dispose();
-    _fadeController.dispose();
-    _stageTimer?.cancel();
-    _progressTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final currentStage = _currentStage < _stages.length
-        ? _stages[_currentStage]
-        : _stages.last;
-
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: widget.isDark
-            ? const Color(0xFF1C1C1E).withOpacity(0.95)
-            : Colors.white.withOpacity(0.95),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: widget.isDark
-              ? Colors.white.withOpacity(0.1)
-              : Colors.black.withOpacity(0.05),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.3),
-            blurRadius: 40,
-            offset: const Offset(0, 20),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Header with pulsing icon
-          FadeTransition(
-            opacity: _fadeAnimation,
-            child: AnimatedBuilder(
-              animation: _pulseAnimation,
-              builder: (context, child) {
-                return Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      colors: [
-                        widget.accentColor.withOpacity(0.2),
-                        widget.accentColor.withOpacity(0.05),
-                      ],
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: widget.accentColor.withOpacity(
-                          0.3 + (_pulseAnimation.value * 0.2),
-                        ),
-                        blurRadius: 20 + (_pulseAnimation.value * 10),
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: widget.accentColor.withOpacity(0.1),
-                    ),
-                    child: Icon(
-                      _isCompleted ? Icons.check_circle : currentStage.icon,
-                      size: 40,
-                      color: widget.accentColor,
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-
-          const SizedBox(height: 24),
-
-          // Stage title
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 300),
-            child: Text(
-              _isCompleted ? "Transcription Complete!" : currentStage.title,
-              key: ValueKey(_isCompleted ? "completed" : currentStage.title),
-              style: GoogleFonts.inter(
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-                color: widget.isDark ? Colors.white : Colors.black87,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ),
-
-          const SizedBox(height: 8),
-
-          // Stage description
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 300),
-            child: Text(
-              _isCompleted
-                  ? "Your audio has been successfully transcribed"
-                  : currentStage.description,
-              key: ValueKey(
-                _isCompleted ? "completed_desc" : currentStage.description,
-              ),
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                color: (widget.isDark ? Colors.white : Colors.black87)
-                    .withOpacity(0.7),
-                height: 1.4,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ),
-
-          const SizedBox(height: 32),
-
-          // Progress bar
-          Container(
-            height: 8,
-            decoration: BoxDecoration(
-              color: widget.isDark
-                  ? Colors.white.withOpacity(0.1)
-                  : Colors.black.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Stack(
-              children: [
-                // Overall progress
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width:
-                      MediaQuery.of(context).size.width *
-                      0.6 *
-                      _overallProgress,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        widget.accentColor,
-                        widget.accentColor.withOpacity(0.8),
-                      ],
-                    ),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                // Animated shimmer effect
-                if (!_isCompleted)
-                  AnimatedBuilder(
-                    animation: _progressAnimation,
-                    builder: (context, child) {
-                      return Positioned(
-                        left:
-                            (MediaQuery.of(context).size.width *
-                                0.6 *
-                                _overallProgress) -
-                            20,
-                        child: Container(
-                          width: 40,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                Colors.white.withOpacity(0.0),
-                                Colors.white.withOpacity(0.3),
-                                Colors.white.withOpacity(0.0),
-                              ],
-                            ),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // Progress percentage and stage indicator
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                "${(_overallProgress * 100).toInt()}%",
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: widget.accentColor,
-                ),
-              ),
-              Text(
-                "Stage ${_currentStage + 1} of ${_stages.length}",
-                style: GoogleFonts.inter(
-                  fontSize: 12,
-                  color: (widget.isDark ? Colors.white : Colors.black87)
-                      .withOpacity(0.6),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 24),
-
-          // Stage indicators
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(_stages.length, (index) {
-              final isActive = index == _currentStage;
-              final isCompleted = index < _currentStage || _isCompleted;
-
-              return Container(
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                width: isActive ? 24 : 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: isCompleted
-                      ? widget.accentColor
-                      : isActive
-                      ? widget.accentColor.withOpacity(0.5)
-                      : (widget.isDark ? Colors.white : Colors.black87)
-                            .withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              );
-            }),
-          ),
-
-          const SizedBox(height: 24),
-
-          // Cancel button (only show if not completed)
-          if (!_isCompleted && widget.onCancel != null)
-            TextButton(
-              onPressed: widget.onCancel,
-              child: Text(
-                "Cancel",
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  color: (widget.isDark ? Colors.white : Colors.black87)
-                      .withOpacity(0.7),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class TranscriptionStage {
-  final String title;
-  final String description;
-  final Duration duration;
-  final IconData icon;
-
-  TranscriptionStage({
-    required this.title,
-    required this.description,
-    required this.duration,
-    required this.icon,
-  });
-}
-
-// Usage example: Add this method to your RecordingCard class
-void _showTranscriptionProgress(BuildContext context) {
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (BuildContext context) {
-      return Dialog(
-        backgroundColor: Colors.transparent,
-        child: TranscriptionProgressWidget(
-          recordingDuration: Duration(seconds: 10), // Example duration
-          accentColor: Colors.blue,
-          isDark: Theme.of(context).brightness == Brightness.dark,
-          onCancel: () {
-            Navigator.of(context).pop();
-            // Handle cancellation logic here
-          },
-        ),
-      );
-    },
-  );
 }

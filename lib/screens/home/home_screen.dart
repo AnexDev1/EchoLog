@@ -25,7 +25,6 @@ import 'package:echolog/widgets/dialogs/create_password_dialog.dart';
 import 'package:echolog/widgets/dialogs/enter_password_dialog.dart';
 import 'package:echolog/widgets/dialogs/filter_bottom_sheet_widget.dart';
 import 'package:echolog/widgets/dialogs/save_recording_dialog.dart';
-import 'package:echolog/widgets/transcription_progress_bar.dart';
 // import 'package:echolog/services/recording_service.dart'; // Not used directly in this file
 
 import 'package:flutter/material.dart';
@@ -1810,20 +1809,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         else
           mainScaffoldContent,
         // Overlay the progress bar at the bottom if transcribing
-        Consumer<TranscriptionStatusProvider>(
-          builder: (context, transcriptionStatus, _) {
-            if (!transcriptionStatus.isTranscribing) return SizedBox.shrink();
-            return Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: TranscriptionProgressBar(
-                progress: transcriptionStatus.progress,
-                statusText: transcriptionStatus.statusText,
-              ),
-            );
-          },
-        ),
+        // Consumer<TranscriptionStatusProvider>(
+        //   builder: (context, transcriptionStatus, _) {
+        //     if (!transcriptionStatus.isTranscribing) return SizedBox.shrink();
+        //     return Positioned(
+        //       left: 0,
+        //       right: 0,
+        //       bottom: 0,
+        //       child: TranscriptionProgressBar(
+        //         progress: transcriptionStatus.progress,
+        //         statusText: transcriptionStatus.statusText,
+        //       ),
+        //     );
+        //   },
+        // ),
       ],
     );
   }

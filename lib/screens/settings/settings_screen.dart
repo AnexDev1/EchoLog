@@ -1,4 +1,5 @@
 import 'package:echolog/services/data_exporter_service.dart';
+import 'package:echolog/services/api_key_service.dart';
 import 'package:echolog/services/security_service.dart';
 import 'package:echolog/theme/theme_provider.dart';
 import 'package:flutter/material.dart';
@@ -861,6 +862,56 @@ class _SettingsScreenState extends State<SettingsScreen>
         child: ListView(
           padding: const EdgeInsets.only(bottom: 32),
           children: [
+            // Gemini API Key Section
+            _buildSettingsGroup(
+              title: 'GEMINI API',
+              children: [
+                _buildSettingsItem(
+                  icon: Icons.vpn_key_outlined,
+                  title: 'Clear Gemini API Key',
+                  subtitle:
+                      'Remove the stored Gemini API key from secure storage',
+                  onTap: () async {
+                    try {
+                      await ApiKeyService.removeApiKey();
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Gemini API key cleared.',
+                              style: GoogleFonts.inter(),
+                            ),
+                            backgroundColor: Colors.green,
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Failed to clear API key: $e',
+                              style: GoogleFonts.inter(),
+                            ),
+                            backgroundColor: Colors.red,
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        );
+                      }
+                    }
+                  },
+                  isFirst: true,
+                  isLast: true,
+                ),
+              ],
+            ),
             // Secret Vault Section
             _buildSettingsGroup(
               title: 'SECRET VAULT',
