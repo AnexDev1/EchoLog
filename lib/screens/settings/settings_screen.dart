@@ -1,5 +1,5 @@
-import 'package:echolog/services/data_exporter_service.dart';
 import 'package:echolog/services/api_key_service.dart';
+import 'package:echolog/services/data_exporter_service.dart';
 import 'package:echolog/services/security_service.dart';
 import 'package:echolog/theme/theme_provider.dart';
 import 'package:flutter/material.dart';
@@ -874,6 +874,7 @@ class _SettingsScreenState extends State<SettingsScreen>
                   onTap: () async {
                     try {
                       await ApiKeyService.removeApiKey();
+                      setState(() {}); // Force UI to refresh and re-fetch key
                       if (mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(

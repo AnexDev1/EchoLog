@@ -5,6 +5,7 @@ import 'package:echolog/providers/streak_provider.dart';
 import 'package:echolog/providers/transcription_status_provider.dart';
 import 'package:echolog/screens/home/home_screen.dart';
 import 'package:echolog/screens/locked/locked_screen.dart';
+import 'package:echolog/services/api_key_service.dart';
 import 'package:echolog/services/security_service.dart';
 import 'package:echolog/theme/app_themes.dart';
 import 'package:echolog/theme/theme_provider.dart';
@@ -14,7 +15,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_gemini/flutter_gemini.dart';
-import 'package:echolog/services/api_key_service.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
@@ -39,9 +39,7 @@ Future<void> main() async {
 
   // Gemini API initialization (from secure storage, not hardcoded)
   final apiKey = await ApiKeyService.getApiKey();
-  if (apiKey != null && apiKey.isNotEmpty) {
-    Gemini.init(apiKey: apiKey);
-  }
+  Gemini.init(apiKey: apiKey ?? '');
 
   if (!Hive.isAdapterRegistered(ColorAdapter().typeId)) {
     Hive.registerAdapter(ColorAdapter());

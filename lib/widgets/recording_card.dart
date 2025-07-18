@@ -19,6 +19,8 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/gemini_helper.dart';
+
 // Helper for url_launcher LaunchMode (for backward compatibility)
 // Remove this if LaunchMode is already available in your url_launcher version
 enum _LaunchMode { platformDefault, inAppWebView, externalApplication }
@@ -1102,6 +1104,16 @@ class _RecordingCardState extends State<RecordingCard>
       );
     }
 
+    // Add Clear Gemini API Key option
+    items.add(
+      _buildMenuItem(
+        'replace_gemini_api_key',
+        Icons.vpn_key_off_outlined,
+        'Replace Gemini API Key',
+        isDestructive: true,
+      ),
+    );
+
     if (items.isNotEmpty && widget.onDelete != null) {
       items.add(const PopupMenuDivider());
     }
@@ -1213,6 +1225,161 @@ class _RecordingCardState extends State<RecordingCard>
           _isAIResponseHidden = true;
         });
         break;
+      case 'replace_gemini_api_key':
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (BuildContext dialogContext) {
+            final theme = Theme.of(dialogContext);
+            final isDark = theme.brightness == Brightness.dark;
+            final TextEditingController _apiKeyController =
+                TextEditingController();
+            return StatefulBuilder(
+              builder: (context, setState) {
+                return Dialog(
+                  backgroundColor: Colors.transparent,
+                  child: Container(
+                    width: 360,
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? const Color(0xFF1C1C1E).withOpacity(0.98)
+                          : Colors.white.withOpacity(0.98),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: isDark
+                            ? Colors.white.withOpacity(0.1)
+                            : Colors.black.withOpacity(0.05),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.18),
+                          blurRadius: 32,
+                          offset: const Offset(0, 12),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.vpn_key_rounded,
+                              color: theme.colorScheme.primary,
+                              size: 28,
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              'Replace Gemini API Key',
+                              style: GoogleFonts.inter(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                                color: theme.colorScheme.onSurface,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 18),
+                        Text(
+                          'Enter a new Gemini API key. You can get one for free from Google AI Studio.',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            color: theme.colorScheme.onSurface.withOpacity(0.7),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        GestureDetector(
+                          onTap: _launchApiKeyUrl,
+                          child: Text(
+                            'Get an API key',
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              color: theme.colorScheme.primary,
+                              decoration: TextDecoration.underline,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        TextField(
+                          controller: _apiKeyController,
+                          obscureText: true,
+                          decoration: InputDecoration(
+                            labelText: 'New Gemini API Key',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          style: GoogleFonts.inter(fontSize: 15),
+                          autofocus: true,
+                          onSubmitted: (_) async {
+                            final newKey = _apiKeyController.text.trim();
+                            if (newKey.isNotEmpty) {
+                              await ApiKeyService.replaceApiKey(newKey);
+                              Navigator.of(dialogContext).pop();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Gemini API key replaced.',
+                                    style: GoogleFonts.inter(fontSize: 14),
+                                  ),
+                                  backgroundColor: Colors.green,
+                                  duration: const Duration(seconds: 2),
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 24),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _ModernButton(
+                                text: 'Cancel',
+                                onPressed: () {
+                                  Navigator.of(dialogContext).pop();
+                                },
+                                isSecondary: true,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _ModernButton(
+                                text: 'Replace',
+                                onPressed: () async {
+                                  final newKey = _apiKeyController.text.trim();
+                                  if (newKey.isNotEmpty) {
+                                    await ApiKeyService.replaceApiKey(newKey);
+                                    Navigator.of(dialogContext).pop();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Gemini API key replaced.',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                        backgroundColor: Colors.green,
+                                        duration: const Duration(seconds: 2),
+                                      ),
+                                    );
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        );
+        break;
     }
   }
 
@@ -1317,7 +1484,17 @@ class _RecordingCardState extends State<RecordingCard>
                             await ApiKeyService.saveApiKey(
                               _apiKeyController.text.trim(),
                             );
+                            GeminiHelper.initWithKey(
+                              _apiKeyController.text.trim(),
+                            );
                             Navigator.of(dialogContext).pop();
+                            // Wait for dialog to close and Gemini to re-init
+                            await Future.delayed(
+                              const Duration(milliseconds: 150),
+                            );
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              _handleTranscribeWithApiKey(context);
+                            });
                           }
                         },
                       ),
@@ -1342,9 +1519,14 @@ class _RecordingCardState extends State<RecordingCard>
                                   await ApiKeyService.saveApiKey(
                                     _apiKeyController.text.trim(),
                                   );
+                                  // Wait for the key to be saved and dialog to close
+                                  await Future.delayed(
+                                    const Duration(milliseconds: 200),
+                                  );
+                                  GeminiHelper.initWithKey(
+                                    _apiKeyController.text.trim(),
+                                  );
                                   Navigator.of(dialogContext).pop();
-                                  // Retry transcription after saving
-                                  _handleTranscribeWithApiKey(context);
                                 }
                               },
                             ),
