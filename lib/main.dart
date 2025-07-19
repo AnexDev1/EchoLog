@@ -37,7 +37,6 @@ Future<void> main() async {
   final appDocumentDir = await getApplicationDocumentsDirectory();
   await Hive.initFlutter(appDocumentDir.path);
 
-  // Gemini API initialization (from secure storage, not hardcoded)
   final apiKey = await ApiKeyService.getApiKey();
   Gemini.init(apiKey: apiKey ?? '');
 
